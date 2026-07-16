@@ -1,0 +1,17 @@
+{
+  "name": "finops-sre-agent-pack",
+  "owner": {
+    "name": "nirmash"
+  },
+  "metadata": {
+    "description": "FinOps skills and agents for Azure SRE Agent",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "finops",
+      "description": "FinOps skills for Azure SRE Agent: cost anomaly detection and (planned) rightsizing, showback, budget governance, FinOps-for-AI, cost reporting, and cost-vs-reliability.",
+      "source": "./plugins/finops"
+    }
+  ]
+}

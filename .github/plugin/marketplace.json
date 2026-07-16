@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "finops",
-      "description": "FinOps skills for Azure SRE Agent: cost anomaly detection and (planned) rightsizing, showback, budget governance, FinOps-for-AI, cost reporting, and cost-vs-reliability.",
+      "description": "FinOps skills for Azure SRE Agent: cost anomaly detection, rightsizing advisor, and (planned) showback, budget governance, FinOps-for-AI, cost reporting, and cost-vs-reliability.",
       "source": "./plugins/finops"
     }
   ]

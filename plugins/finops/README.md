@@ -10,7 +10,7 @@ Python (`ExecutePythonCode`).
 | Skill | What it does | Status |
 |-------|--------------|--------|
 | [`cost-anomaly-detection`](skills/cost-anomaly-detection/SKILL.md) | Detect cost spikes and correlate each to the deployment / change / PR that caused it | ✅ Wave 1 — validated live |
-| `rightsizing-advisor` | Advisor + live utilization + AKS node pools → rightsizing recommendations | 🔜 planned |
+| [`rightsizing-advisor`](skills/rightsizing-advisor/SKILL.md) | Advisor cost recs + live utilization + inventory → ranked rightsizing / idle-cleanup recommendations, validated against real utilization and cost | ✅ Wave 1 — validated live |
 | `cost-optimization-report` | Recurring cost report bundling anomalies, rightsizing, budget status, policy violations | 🔜 planned |
 | `cost-allocation` (showback) | Join cost line items with tags → spend by service/team/env; flag untagged spend | 🔜 planned |
 | `budget-governance` | Burn-rate vs thresholds, client-side month-end forecast, process gates | 🔜 planned |
@@ -37,18 +37,19 @@ required** — line items are aggregated / detected client-side in the sandbox. 
 
 ## Install everything (recommended)
 
-This plugin ships as a **package**: one command installs the skill, the proactive daily scheduled
-task, and (optionally) the RBAC grant. The proactive task is named **`FinOps: Cost Anomaly Detection
-(Daily)`** so it's clear in the agent's Scheduled Tasks list that it belongs to the FinOps pack and
-was installed alongside the skill.
+This plugin ships as a **package**: one command installs both skills, the two proactive scheduled
+tasks, and (optionally) the RBAC grant. The proactive tasks are named **`FinOps: Cost Anomaly
+Detection (Daily)`** and **`FinOps: Rightsizing Review (Weekly)`** so it's clear in the agent's
+Scheduled Tasks list that they belong to the FinOps pack and were installed alongside the skills.
 
 ### Option A — API installer (no srectl, recommended)
 
 [`install-api.sh`](install-api.sh) installs everything by calling the agent's own management API
 directly (the same control-plane `srectl` uses) — so it needs only `az` (logged in), `curl`, and
 `python3`. No .NET build, no private NuGet feed. It (1) registers this repo as a plugin marketplace,
-(2) installs the `finops` plugin (the server clones the repo and copies the whole skill dir —
-`SKILL.md` + `detect.py`), and (3) upserts the daily scheduled task. Re-running is safe.
+(2) installs the `finops` plugin (the server clones the repo and copies **both** skill dirs —
+`SKILL.md` + `detect.py`/`rightsize.py`), and (3) upserts the daily and weekly scheduled tasks.
+Re-running is safe.
 
 ```bash
 # Your az-login identity must own ARM write on the agent (the resource owner does).
@@ -64,16 +65,18 @@ MI_OBJECT_ID=<agent-mi-object-id> AGENT_RESOURCE_ID=<id> ./install-api.sh
 
 Configuration (all optional, shown with defaults): `AGENT_RESOURCE_ID`/`ENDPOINT`,
 `MARKETPLACE_NAME=finops-pack`, `PLUGIN_NAME=finops`, `REPO_SLUG=nirmash/finops-sre-agent-pack`,
-`GITHUB_PAT`, `TASK_NAME`, `CRON="0 14 * * *"` (daily 14:00 UTC), `AGENT_NAME`, `SUB_ID`,
-`ALERT_EMAIL`, `GITHUB_REPO`, `MI_OBJECT_ID`.
+`GITHUB_PAT`, `TASK_NAME`, `CRON="0 14 * * *"` (daily 14:00 UTC), `RIGHTSIZE_TASK_NAME`,
+`RIGHTSIZE_CRON="0 15 * * 1"` (Mon 15:00 UTC), `AGENT_NAME`, `SUB_ID`, `ALERT_EMAIL`, `GITHUB_REPO`,
+`MI_OBJECT_ID`.
 
 > Once this repo is public, drop `GITHUB_PAT` — the server clones it with the host's default GitHub
 > identity.
 
 ### Option B — srectl installer
 
-[`install.sh`](install.sh) does the same thing via `srectl` (skill apply + scheduledtask apply,
-upsert by name). Point srectl at your agent first (`srectl init --resource-url <endpoint>`).
+[`install.sh`](install.sh) does the same thing via `srectl` (skill apply + scheduledtask apply for
+both skills and both tasks, upsert by name). Point srectl at your agent first
+(`srectl init --resource-url <endpoint>`).
 
 ```bash
 AGENT_NAME="My Agent" SUB_ID=<subscription-id> ./install.sh
@@ -87,7 +90,9 @@ What both installers set up:
 | Component | What / where |
 |-----------|--------------|
 | **Skill** `cost-anomaly-detection` | the whole skill dir `skills/cost-anomaly-detection/` (SKILL.md + `detect.py`) |
-| **Scheduled task** `FinOps: Cost Anomaly Detection (Daily)` | daily scan from [`scheduled-tasks/cost-anomaly-daily.yaml`](scheduled-tasks/cost-anomaly-daily.yaml) — alerts only on a spike; the `FinOps:` prefix marks it as part of this pack |
+| **Skill** `rightsizing-advisor` | the whole skill dir `skills/rightsizing-advisor/` (SKILL.md + `rightsize.py`) |
+| **Scheduled task** `FinOps: Cost Anomaly Detection (Daily)` | daily scan from [`scheduled-tasks/cost-anomaly-daily.yaml`](scheduled-tasks/cost-anomaly-daily.yaml) — alerts only on a spike |
+| **Scheduled task** `FinOps: Rightsizing Review (Weekly)` | weekly review from [`scheduled-tasks/rightsizing-weekly.yaml`](scheduled-tasks/rightsizing-weekly.yaml) — ranked savings opportunities |
 | **RBAC** (optional) | Cost Management Reader on the agent MI when `MI_OBJECT_ID` is set |
 
 > `install.sh` uses `srectl`, which must be built from `Agent.Cli` in the `sreagent-runtime` repo
@@ -150,11 +155,29 @@ All 5 validation parts passed. The **daily proactive scheduled task** is also re
 on the live agent (`FinOps: Cost Anomaly Detection (Daily)`, cron `0 14 * * *`), and the whole pack
 has been installed end-to-end via [`install-api.sh`](install-api.sh) against a live agent.
 
+`rightsizing-advisor` was validated to the **same level** — 15 offline unit tests plus a live
+end-to-end run on the same subscription (`93cba93f…`):
+
+- Pulled **8 real Azure Advisor cost recs** (unattached disk, 3 empty App Service plans, 4 AKS).
+- Pulled **live Resource Graph inventory** and **30 days of Consumption cost** (4 pages), aggregating
+  spend by resource id — surfacing the `instanceName`/`resourceId` modern-billing detail below.
+- Ran `recommend_rightsizing` on the real data: Advisor + inventory findings merged and ranked by
+  estimated monthly savings, quantified rows first and unknown-savings rows last.
+- Backtest: injected a synthetic idle VM (p95 CPU 1.5%) and an oversized VM (p95 CPU 11%) → classified
+  `idle` (full-cost savings) and `oversized` (50% one-tier estimate), ranked idle first.
+
+All 6 validation parts passed. The **weekly proactive scheduled task**
+(`FinOps: Rightsizing Review (Weekly)`, cron `0 15 * * 1`) is part of the same package install.
+
+> Modern-billing note found during validation: in Consumption UsageDetails the full ARM resource id
+> is in `properties.instanceName` (the `resourceId` field is null), so cost is aggregated by
+> `instanceName` (case-insensitive), falling back to `resourceId`.
+
 ## Test
 
-The detection logic is pure Python and offline-testable:
+Both skills' logic is pure Python and offline-testable (`detect.py`, `rightsize.py`):
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/
+pytest tests/          # 23 tests: 8 for cost-anomaly-detection, 15 for rightsizing-advisor
 ```

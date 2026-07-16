@@ -1,0 +1,50 @@
+# Proactive weekly rightsizing / savings review.
+#
+# Applied by install.sh via `srectl scheduledtask apply --file`. The installer
+# renders the __PLACEHOLDER__ tokens from environment variables before applying;
+# you can also copy this file, fill the tokens in by hand, and apply it directly.
+#
+# Apply is upsert-by-name, so re-running is idempotent.
+apiVersion: azuresre.ai/v1
+kind: ScheduledTask
+metadata:
+  name: "FinOps: Rightsizing Review (Weekly)"
+  owner: __ALERT_EMAIL__
+  tags:
+    - finops
+    - rightsizing-advisor
+spec:
+  name: "FinOps: Rightsizing Review (Weekly)"
+  description: >-
+    Part of the FinOps pack — installed with the rightsizing-advisor skill.
+    Weekly read-only rightsizing / idle-resource review; reports ranked savings
+    opportunities validated against real utilization and cost.
+  agent: __AGENT_NAME__
+  cron: __CRON__
+  modelTier: ReasoningHeavy
+  agentPrompt: |
+    Run the `rightsizing-advisor` skill for subscription __SUB_ID__. Read-only.
+    Follow the skill's procedure exactly:
+
+    1. Load the skill — read its SKILL.md so you use the bundled rightsize.py and steps.
+    2. Step 1 (Advisor): `az advisor recommendation list --category Cost` and flatten to
+       {resourceId, problem, recommendation, targetSku, savingsUsd}.
+    3. Step 2 (inventory): `az graph query` for VMs, disks, and App Service plans; flatten to
+       {resourceId, type, sku, powerState, diskState, numberOfSites, tags}.
+    4. Step 3 (utilization): for each VM candidate, `az monitor metrics list` "Percentage CPU"
+       over the last 14 days; reduce to {cpu_p95, cpu_avg, mem_p95, sample_days}.
+    5. Step 4 (cost): GET Consumption UsageDetails (ActualCost) for ~30 days via
+       `az rest --method get`, paginate nextLink, aggregate costInUSD by resourceId into
+       {resourceId: monthly_usd}.
+    6. Step 5 (rank): write the skill's rightsize.py to the sandbox and run
+       `recommend_rightsizing(resources=..., utilization=..., costs=..., advisor=...)`.
+    7. Step 6 (report):
+       - If NOTHING clears the savings threshold, reply with a single line
+         "No rightsizing opportunities above threshold this week." and stop. Do not email.
+       - Otherwise produce a ranked table (resource, type, kind, current SKU, recommended
+         action, current monthly $, est monthly savings $, validated, evidence) with the
+         TOTAL estimated monthly savings at the top, mark validated=false / unvalidated rows
+         as "verify first", and email the report to __ALERT_EMAIL__ with subject
+         "Weekly rightsizing review — <date>" and Normal importance.
+
+    Recommend only. Read-only. Do not use any write/POST Azure operations.

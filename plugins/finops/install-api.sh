@@ -41,9 +41,11 @@ SOURCE_FORMAT="${SOURCE_FORMAT:-copilot}"
 GITHUB_PAT="${GITHUB_PAT:-}"                      # set for a private repo; else host-default identity
 
 TASK_NAME="${TASK_NAME:-FinOps: Cost Anomaly Detection (Daily)}"
+RIGHTSIZE_TASK_NAME="${RIGHTSIZE_TASK_NAME:-FinOps: Rightsizing Review (Weekly)}"
 AGENT_NAME="${AGENT_NAME:-Nir Mashkowski}"
 SUB_ID="${SUB_ID:-93cba93f-571e-44e9-ac0a-a2987b58848c}"
-CRON="${CRON:-0 14 * * *}"
+CRON="${CRON:-0 14 * * *}"                         # daily anomaly scan (14:00 UTC)
+RIGHTSIZE_CRON="${RIGHTSIZE_CRON:-0 15 * * 1}"     # weekly rightsizing review (Mon 15:00 UTC)
 ALERT_EMAIL="${ALERT_EMAIL:-nimashkowski@microsoft.com}"
 GITHUB_REPO="${GITHUB_REPO:-nirmash/azure-sre-agent-sandbox}"   # repo searched for change correlation
 MI_OBJECT_ID="${MI_OBJECT_ID:-}"                 # agent MI objectId; set to auto-grant Cost Management Reader
@@ -150,9 +152,48 @@ case "$HTTP_CODE" in
   *) die "Plugin install failed (HTTP $HTTP_CODE): $resp";;
 esac
 
-# ---- 4. Upsert the scheduled task ------------------------------------------
+# ---- 4. Upsert the scheduled tasks -----------------------------------------
+# upsert_task NAME DESCRIPTION CRON PROMPT — POST new / PUT existing by name.
+upsert_task() {
+  local name="$1" description="$2" cron="$3" prompt="$4"
+
+  api GET /api/v1/scheduledtasks; local existing="$RESP_BODY"
+  local task_id
+  task_id="$(printf '%s' "$existing" | TASK_NAME="$name" python3 -c '
+import json,os,sys
+name=os.environ["TASK_NAME"]
+try: data=json.load(sys.stdin)
+except Exception: data=[]
+tasks=data if isinstance(data,list) else data.get("value",[])
+print(next((t.get("id","") for t in tasks if t.get("name")==name), ""))' 2>/dev/null || true)"
+
+  local body; body="$(mktemp)"
+  TASK_NAME="$name" TASK_DESC="$description" CRON="$cron" AGENT_NAME="$AGENT_NAME" PROMPT="$prompt" \
+    python3 - "$body" <<'PY'
+import json, os, sys
+doc = {
+    "name": os.environ["TASK_NAME"],
+    "description": os.environ["TASK_DESC"],
+    "cronExpression": os.environ["CRON"],
+    "agentPrompt": os.environ["PROMPT"],
+    "agent": os.environ["AGENT_NAME"],
+    "agentMode": "autonomous",
+}
+open(sys.argv[1], "w").write(json.dumps(doc))
+PY
+
+  if [ -n "$task_id" ]; then
+    api PUT "/api/v1/scheduledtasks/${task_id}" "$body"
+    case "$HTTP_CODE" in 200|201|204) ok "Scheduled task updated: $name ($task_id)";; *) rm -f "$body"; die "Task update failed (HTTP $HTTP_CODE): $RESP_BODY";; esac
+  else
+    api POST /api/v1/scheduledtasks "$body"
+    case "$HTTP_CODE" in 200|201) ok "Scheduled task created: $name";; *) rm -f "$body"; die "Task create failed (HTTP $HTTP_CODE): $RESP_BODY";; esac
+  fi
+  rm -f "$body"
+}
+
 say "Upserting scheduled task '$TASK_NAME'"
-read -r -d '' PROMPT <<EOF || true
+read -r -d '' ANOMALY_PROMPT <<EOF || true
 Run the \`cost-anomaly-detection\` skill for subscription ${SUB_ID}. Read-only. Follow the skill's procedure exactly:
 
 1. Load the skill — read its SKILL.md so you use the bundled detector and steps.
@@ -165,46 +206,38 @@ Run the \`cost-anomaly-detection\` skill for subscription ${SUB_ID}. Read-only. 
 
 Read-only only. Do not use any write/POST Azure operations.
 EOF
+upsert_task "$TASK_NAME" \
+  "Part of the FinOps pack — installed with the cost-anomaly-detection skill. Proactive daily cost-anomaly scan; reports only when a spike is detected." \
+  "$CRON" "$ANOMALY_PROMPT"
 
-# Does a task with this name already exist?
-api GET /api/v1/scheduledtasks; existing="$RESP_BODY"
-TASK_ID="$(printf '%s' "$existing" | TASK_NAME="$TASK_NAME" python3 -c '
-import json,os,sys
-name=os.environ["TASK_NAME"]
-try: data=json.load(sys.stdin)
-except Exception: data=[]
-tasks=data if isinstance(data,list) else data.get("value",[])
-print(next((t.get("id","") for t in tasks if t.get("name")==name), ""))' 2>/dev/null || true)"
+say "Upserting scheduled task '$RIGHTSIZE_TASK_NAME'"
+read -r -d '' RIGHTSIZE_PROMPT <<EOF || true
+Run the \`rightsizing-advisor\` skill for subscription ${SUB_ID}. Read-only. Follow the skill's procedure exactly:
 
-task_body="$(mktemp)"
-TASK_NAME="$TASK_NAME" CRON="$CRON" AGENT_NAME="$AGENT_NAME" PROMPT="$PROMPT" python3 - "$task_body" <<'PY'
-import json, os, sys
-doc = {
-    "name": os.environ["TASK_NAME"],
-    "description": "Part of the FinOps pack — installed with the cost-anomaly-detection skill. Proactive daily cost-anomaly scan; reports only when a spike is detected.",
-    "cronExpression": os.environ["CRON"],
-    "agentPrompt": os.environ["PROMPT"],
-    "agent": os.environ["AGENT_NAME"],
-    "agentMode": "autonomous",
-}
-open(sys.argv[1], "w").write(json.dumps(doc))
-PY
+1. Load the skill — read its SKILL.md so you use the bundled rightsize.py and steps.
+2. Step 1 (Advisor): \`az advisor recommendation list --category Cost\` and flatten to {resourceId, problem, recommendation, targetSku, savingsUsd}.
+3. Step 2 (inventory): \`az graph query\` for VMs, disks, and App Service plans; flatten to {resourceId, type, sku, powerState, diskState, numberOfSites, tags}.
+4. Step 3 (utilization): for each VM candidate, \`az monitor metrics list\` "Percentage CPU" over 14 days; reduce to {cpu_p95, cpu_avg, mem_p95, sample_days}.
+5. Step 4 (cost): GET Consumption UsageDetails (ActualCost) for ~30 days via \`az rest --method get\`, paginate nextLink, aggregate costInUSD by resourceId into {resourceId: monthly_usd}.
+6. Step 5 (rank): write the skill's rightsize.py to the sandbox and run recommend_rightsizing(resources=..., utilization=..., costs=..., advisor=...).
+7. Step 6 (report):
+   - If NOTHING clears the savings threshold, reply with a single line "No rightsizing opportunities above threshold this week." and stop. Do not email.
+   - Otherwise produce a ranked table (resource, type, kind, current SKU, recommended action, current monthly \$, est monthly savings \$, validated, evidence) with the TOTAL estimated monthly savings at the top, mark validated=false / unvalidated rows as "verify first", and email the report to ${ALERT_EMAIL} with subject "Weekly rightsizing review — <date>" and Normal importance.
 
-if [ -n "$TASK_ID" ]; then
-  api PUT "/api/v1/scheduledtasks/${TASK_ID}" "$task_body"; resp="$RESP_BODY"
-  case "$HTTP_CODE" in 200|201|204) ok "Scheduled task updated ($TASK_ID)";; *) die "Task update failed (HTTP $HTTP_CODE): $resp";; esac
-else
-  api POST /api/v1/scheduledtasks "$task_body"; resp="$RESP_BODY"
-  case "$HTTP_CODE" in 200|201) ok "Scheduled task created";; *) die "Task create failed (HTTP $HTTP_CODE): $resp";; esac
-fi
+Recommend only. Read-only. Do not use any write/POST Azure operations.
+EOF
+upsert_task "$RIGHTSIZE_TASK_NAME" \
+  "Part of the FinOps pack — installed with the rightsizing-advisor skill. Weekly read-only rightsizing / idle-resource review; reports ranked savings opportunities." \
+  "$RIGHTSIZE_CRON" "$RIGHTSIZE_PROMPT"
 
 # ---- 5. Verify --------------------------------------------------------------
 say "Verifying"
 api GET /api/v2/plugins/installations; resp="$RESP_BODY"
 printf '%s' "$resp" | grep -qi "$PLUGIN_NAME" && ok "plugin installation present" || warn "plugin not visible yet (install may still be finishing)"
 api GET /api/v1/scheduledtasks; resp="$RESP_BODY"
-printf '%s' "$resp" | grep -qi "Cost Anomaly Detection" && ok "scheduled task present" || warn "task not visible"
+printf '%s' "$resp" | grep -qi "Cost Anomaly Detection" && ok "daily anomaly task present"   || warn "anomaly task not visible"
+printf '%s' "$resp" | grep -qi "Rightsizing Review"     && ok "weekly rightsizing task present" || warn "rightsizing task not visible"
 
-say "Done — cost-anomaly package installed via the agent API."
-printf '  • Skill  : %s (from marketplace %s -> %s)\n' "$SKILL_NAME" "$MARKETPLACE_NAME" "$REPO_SLUG"
-printf '  • Task   : "%s" on cron "%s"\n' "$TASK_NAME" "$CRON"
+say "Done — FinOps pack installed via the agent API."
+printf '  • Skills : cost-anomaly-detection, rightsizing-advisor (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
+printf '  • Tasks  : "%s" on "%s"; "%s" on "%s"\n' "$TASK_NAME" "$CRON" "$RIGHTSIZE_TASK_NAME" "$RIGHTSIZE_CRON"

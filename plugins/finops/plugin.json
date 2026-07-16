@@ -1,6 +1,6 @@
 {
   "name": "finops",
-  "description": "FinOps skills for Azure SRE Agent: cost anomaly detection (and, over time, rightsizing, showback, budget governance, FinOps-for-AI, cost reporting, and cost-vs-reliability). Composes existing read-only Azure tools, the GitHub connector, and in-sandbox Python; no new agent core features required.",
+  "description": "FinOps skills for Azure SRE Agent: cost anomaly detection and rightsizing advisor (and, over time, showback, budget governance, FinOps-for-AI, cost reporting, and cost-vs-reliability). Composes existing read-only Azure tools, the GitHub connector, and in-sandbox Python; no new agent core features required.",
   "license": "MIT",
   "skills": ["skills/"]
 }

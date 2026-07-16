@@ -35,7 +35,7 @@ TOKEN_RESOURCE="${TOKEN_RESOURCE:-https://azuresre.dev}"
 
 MARKETPLACE_NAME="${MARKETPLACE_NAME:-finops-pack}"
 PLUGIN_NAME="${PLUGIN_NAME:-finops}"
-SKILL_NAME="${SKILL_NAME:-cost-anomaly-detection}"
+SKILL_NAME="${SKILL_NAME:-finops-cost-anomaly-detection}"
 REPO_SLUG="${REPO_SLUG:-nirmash/finops-sre-agent-pack}"   # owner/repo (marketplace sourceUrl)
 SOURCE_FORMAT="${SOURCE_FORMAT:-copilot}"
 GITHUB_PAT="${GITHUB_PAT:-}"                      # set for a private repo; else host-default identity
@@ -194,7 +194,7 @@ PY
 
 say "Upserting scheduled task '$TASK_NAME'"
 read -r -d '' ANOMALY_PROMPT <<EOF || true
-Run the \`cost-anomaly-detection\` skill for subscription ${SUB_ID}. Read-only. Follow the skill's procedure exactly:
+Run the \`finops-cost-anomaly-detection\` skill for subscription ${SUB_ID}. Read-only. Follow the skill's procedure exactly:
 
 1. Load the skill — read its SKILL.md so you use the bundled detector and steps.
 2. Step 1 (pull): GET Consumption UsageDetails (ActualCost) for the last 35 days via \`az rest --method get\`, paginate nextLink, and flatten each row to {date, cost, meterCategory, resourceGroup, resourceId, tags}.
@@ -207,12 +207,12 @@ Run the \`cost-anomaly-detection\` skill for subscription ${SUB_ID}. Read-only. 
 Read-only only. Do not use any write/POST Azure operations.
 EOF
 upsert_task "$TASK_NAME" \
-  "Part of the FinOps pack — installed with the cost-anomaly-detection skill. Proactive daily cost-anomaly scan; reports only when a spike is detected." \
+  "Part of the FinOps pack — installed with the finops-cost-anomaly-detection skill. Proactive daily cost-anomaly scan; reports only when a spike is detected." \
   "$CRON" "$ANOMALY_PROMPT"
 
 say "Upserting scheduled task '$RIGHTSIZE_TASK_NAME'"
 read -r -d '' RIGHTSIZE_PROMPT <<EOF || true
-Run the \`rightsizing-advisor\` skill for subscription ${SUB_ID}. Read-only. Follow the skill's procedure exactly:
+Run the \`finops-rightsizing-advisor\` skill for subscription ${SUB_ID}. Read-only. Follow the skill's procedure exactly:
 
 1. Load the skill — read its SKILL.md so you use the bundled rightsize.py and steps.
 2. Step 1 (Advisor): \`az advisor recommendation list --category Cost\` and flatten to {resourceId, problem, recommendation, targetSku, savingsUsd}.
@@ -227,7 +227,7 @@ Run the \`rightsizing-advisor\` skill for subscription ${SUB_ID}. Read-only. Fol
 Recommend only. Read-only. Do not use any write/POST Azure operations.
 EOF
 upsert_task "$RIGHTSIZE_TASK_NAME" \
-  "Part of the FinOps pack — installed with the rightsizing-advisor skill. Weekly read-only rightsizing / idle-resource review; reports ranked savings opportunities." \
+  "Part of the FinOps pack — installed with the finops-rightsizing-advisor skill. Weekly read-only rightsizing / idle-resource review; reports ranked savings opportunities." \
   "$RIGHTSIZE_CRON" "$RIGHTSIZE_PROMPT"
 
 # ---- 5. Verify --------------------------------------------------------------
@@ -239,5 +239,5 @@ printf '%s' "$resp" | grep -qi "Cost Anomaly Detection" && ok "daily anomaly tas
 printf '%s' "$resp" | grep -qi "Rightsizing Review"     && ok "weekly rightsizing task present" || warn "rightsizing task not visible"
 
 say "Done — FinOps pack installed via the agent API."
-printf '  • Skills : cost-anomaly-detection, rightsizing-advisor (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
+printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
 printf '  • Tasks  : "%s" on "%s"; "%s" on "%s"\n' "$TASK_NAME" "$CRON" "$RIGHTSIZE_TASK_NAME" "$RIGHTSIZE_CRON"

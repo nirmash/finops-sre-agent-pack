@@ -12,18 +12,18 @@ metadata:
   owner: __ALERT_EMAIL__
   tags:
     - finops
-    - cost-anomaly-detection
+    - finops-cost-anomaly-detection
 spec:
   name: "FinOps: Cost Anomaly Detection (Daily)"
   description: >-
-    Part of the FinOps pack — installed with the cost-anomaly-detection skill.
+    Part of the FinOps pack — installed with the finops-cost-anomaly-detection skill.
     Proactive daily cost-anomaly scan; reports only when a spike is detected and
     correlates it to the causing change.
   agent: __AGENT_NAME__
   cron: __CRON__
   modelTier: ReasoningHeavy
   agentPrompt: |
-    Run the `cost-anomaly-detection` skill for subscription __SUB_ID__. Read-only.
+    Run the `finops-cost-anomaly-detection` skill for subscription __SUB_ID__. Read-only.
     Follow the skill's procedure exactly:
 
     1. Load the skill — read its SKILL.md so you use the bundled detector and steps.

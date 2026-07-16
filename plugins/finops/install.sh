@@ -4,7 +4,7 @@
 #
 # Installs EVERYTHING the pack needs onto an SRE Agent:
 #   1. (optional) the Cost Management Reader RBAC grant on the agent's managed identity
-#   2. the skills: `cost-anomaly-detection`, `rightsizing-advisor`
+#   2. the skills: `finops-cost-anomaly-detection`, `finops-rightsizing-advisor`
 #   3. the proactive scheduled tasks:
 #        - "FinOps: Cost Anomaly Detection (Daily)"
 #        - "FinOps: Rightsizing Review (Weekly)"
@@ -29,7 +29,7 @@ GITHUB_REPO="${GITHUB_REPO:-nirmash/azure-sre-agent-sandbox}"
 MI_OBJECT_ID="${MI_OBJECT_ID:-}"                 # agent managed identity objectId; set to auto-grant RBAC
 RESOURCE_URL="${RESOURCE_URL:-}"                 # if set, runs `srectl init` against this endpoint first
 
-SKILL_NAMES=("cost-anomaly-detection" "rightsizing-advisor")
+SKILL_NAMES=("finops-cost-anomaly-detection" "finops-rightsizing-advisor")
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DAILY_TEMPLATE="${PLUGIN_DIR}/scheduled-tasks/cost-anomaly-daily.yaml"
 WEEKLY_TEMPLATE="${PLUGIN_DIR}/scheduled-tasks/rightsizing-weekly.yaml"
@@ -108,6 +108,6 @@ srectl scheduledtask list | grep -i "Cost Anomaly Detection" >/dev/null && ok "d
 srectl scheduledtask list | grep -i "Rightsizing Review"     >/dev/null && ok "weekly rightsizing task registered" || warn "weekly task not visible"
 
 say "Done — FinOps pack installed."
-printf '  • On-demand:  ask the agent \"run the cost-anomaly-detection skill for subscription %s\"\n' "$SUB_ID"
-printf '                or \"run the rightsizing-advisor skill for subscription %s\"\n' "$SUB_ID"
+printf '  • On-demand:  ask the agent \"run the finops-cost-anomaly-detection skill for subscription %s\"\n' "$SUB_ID"
+printf '                or \"run the finops-rightsizing-advisor skill for subscription %s\"\n' "$SUB_ID"
 printf '  • Proactive:  anomaly scan daily on \"%s\"; rightsizing review weekly on \"%s\" -> %s\n' "$DAILY_CRON" "$WEEKLY_CRON" "$ALERT_EMAIL"

@@ -1,5 +1,5 @@
 """Rightsizing / idle-resource recommender for the FinOps SRE Agent pack
-(skill: rightsizing-advisor).
+(skill: finops-rightsizing-advisor).
 
 Pure, dependency-free logic so it is unit-testable offline. The agent gathers the
 raw inputs via read-only `az` (Advisor cost recs, Resource Graph inventory, Azure

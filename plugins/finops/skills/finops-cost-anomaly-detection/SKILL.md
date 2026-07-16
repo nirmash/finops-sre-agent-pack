@@ -1,5 +1,5 @@
 ---
-name: cost-anomaly-detection
+name: finops-cost-anomaly-detection
 description: Detect Azure cost spikes and explain why they happened. Pulls the daily cost time-series from Cost Management (Consumption UsageDetails), detects per-service/per-meter anomalies with the bundled detect.py (run in-sandbox via ExecutePythonCode), then correlates each spike to recent deployments, activity-log changes, and GitHub merges to surface a probable cause. Use for scheduled cost monitoring, "did anything spike this week and why", and adding a cost lens to incident investigations.
 ---
 
@@ -40,7 +40,7 @@ az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/
 Read the detector and run it with `ExecutePythonCode`:
 
 ```
-read_skill_file(skill_name="cost-anomaly-detection", file_path="detect.py")
+read_skill_file(skill_name="finops-cost-anomaly-detection", file_path="detect.py")
 ```
 
 ```python

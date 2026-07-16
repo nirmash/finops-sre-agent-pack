@@ -9,7 +9,7 @@ _PATH = (
     / "plugins"
     / "finops"
     / "skills"
-    / "rightsizing-advisor"
+    / "finops-rightsizing-advisor"
     / "rightsize.py"
 )
 _spec = importlib.util.spec_from_file_location("rightsize", _PATH)

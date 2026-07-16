@@ -1,5 +1,5 @@
 ---
-name: rightsizing-advisor
+name: finops-rightsizing-advisor
 description: Recommend rightsizing and idle-resource cleanup for Azure, read-only. Combines Azure Advisor cost recommendations with live utilization from Azure Monitor and inventory state from Resource Graph, validates each candidate against real CPU utilization and real cost before surfacing it, then ranks recommendations by estimated monthly savings using the bundled rightsize.py (run in-sandbox via ExecutePythonCode). Use for "what can we downsize or turn off", periodic savings reviews, and adding a cost-efficiency lens to capacity questions.
 ---
 
@@ -12,7 +12,7 @@ a weekly savings review, or a cost-efficiency pass during a capacity discussion.
 ranks by dollar savings. It recommends only; it never changes anything (all steps are read-only, and
 a human approves any action).
 
-For cost *spikes* and their root cause, use `cost-anomaly-detection` instead.
+For cost *spikes* and their root cause, use `finops-cost-anomaly-detection` instead.
 
 ## Required access
 
@@ -76,7 +76,7 @@ unvalidated rather than guessing.
 
 ### Step 4 — Pull per-resource monthly cost (optional but recommended)
 
-Reuse the `cost-anomaly-detection` cost pull (modern Consumption UsageDetails GET, paginated) over
+Reuse the `finops-cost-anomaly-detection` cost pull (modern Consumption UsageDetails GET, paginated) over
 the trailing ~30 days and aggregate `costInUSD` by resource id into `{resourceId: monthly_usd}`.
 In **modern billing the full ARM resource id is in `properties.instanceName`** (the `resourceId`
 field is null) — key on `instanceName` and fall back to `resourceId`. Ids are matched
@@ -88,7 +88,7 @@ Management Query/POST API is not needed.
 Read the module and run it — do **not** re-implement the logic in the prompt:
 
 ```
-read_skill_file(skill_name="rightsizing-advisor", file_path="rightsize.py")
+read_skill_file(skill_name="finops-rightsizing-advisor", file_path="rightsize.py")
 ```
 
 ```python

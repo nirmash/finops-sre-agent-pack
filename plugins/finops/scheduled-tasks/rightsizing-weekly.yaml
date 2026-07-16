@@ -12,18 +12,18 @@ metadata:
   owner: __ALERT_EMAIL__
   tags:
     - finops
-    - rightsizing-advisor
+    - finops-rightsizing-advisor
 spec:
   name: "FinOps: Rightsizing Review (Weekly)"
   description: >-
-    Part of the FinOps pack — installed with the rightsizing-advisor skill.
+    Part of the FinOps pack — installed with the finops-rightsizing-advisor skill.
     Weekly read-only rightsizing / idle-resource review; reports ranked savings
     opportunities validated against real utilization and cost.
   agent: __AGENT_NAME__
   cron: __CRON__
   modelTier: ReasoningHeavy
   agentPrompt: |
-    Run the `rightsizing-advisor` skill for subscription __SUB_ID__. Read-only.
+    Run the `finops-rightsizing-advisor` skill for subscription __SUB_ID__. Read-only.
     Follow the skill's procedure exactly:
 
     1. Load the skill — read its SKILL.md so you use the bundled rightsize.py and steps.

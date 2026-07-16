@@ -12,7 +12,7 @@ _DETECT_PATH = (
     / "plugins"
     / "finops"
     / "skills"
-    / "cost-anomaly-detection"
+    / "finops-cost-anomaly-detection"
     / "detect.py"
 )
 _spec = importlib.util.spec_from_file_location("detect", _DETECT_PATH)

@@ -1,4 +1,4 @@
-"""Cost anomaly detector for the FinOps SRE Agent pack (skill: cost-anomaly-detection).
+"""Cost anomaly detector for the FinOps SRE Agent pack (skill: finops-cost-anomaly-detection).
 
 Pure, dependency-free logic so it is unit-testable offline. The agent reads this file
 via `read_skill_file` and runs `detect_anomalies(...)` inside `ExecutePythonCode` after

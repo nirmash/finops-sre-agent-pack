@@ -9,8 +9,8 @@ Python (`ExecutePythonCode`).
 
 | Skill | What it does | Status |
 |-------|--------------|--------|
-| [`cost-anomaly-detection`](skills/cost-anomaly-detection/SKILL.md) | Detect cost spikes and correlate each to the deployment / change / PR that caused it | ✅ Wave 1 — validated live |
-| [`rightsizing-advisor`](skills/rightsizing-advisor/SKILL.md) | Advisor cost recs + live utilization + inventory → ranked rightsizing / idle-cleanup recommendations, validated against real utilization and cost | ✅ Wave 1 — validated live |
+| [`finops-cost-anomaly-detection`](skills/finops-cost-anomaly-detection/SKILL.md) | Detect cost spikes and correlate each to the deployment / change / PR that caused it | ✅ Wave 1 — validated live |
+| [`finops-rightsizing-advisor`](skills/finops-rightsizing-advisor/SKILL.md) | Advisor cost recs + live utilization + inventory → ranked rightsizing / idle-cleanup recommendations, validated against real utilization and cost | ✅ Wave 1 — validated live |
 | `cost-optimization-report` | Recurring cost report bundling anomalies, rightsizing, budget status, policy violations | 🔜 planned |
 | `cost-allocation` (showback) | Join cost line items with tags → spend by service/team/env; flag untagged spend | 🔜 planned |
 | `budget-governance` | Burn-rate vs thresholds, client-side month-end forecast, process gates | 🔜 planned |
@@ -89,8 +89,8 @@ What both installers set up:
 
 | Component | What / where |
 |-----------|--------------|
-| **Skill** `cost-anomaly-detection` | the whole skill dir `skills/cost-anomaly-detection/` (SKILL.md + `detect.py`) |
-| **Skill** `rightsizing-advisor` | the whole skill dir `skills/rightsizing-advisor/` (SKILL.md + `rightsize.py`) |
+| **Skill** `finops-cost-anomaly-detection` | the whole skill dir `skills/finops-cost-anomaly-detection/` (SKILL.md + `detect.py`) |
+| **Skill** `finops-rightsizing-advisor` | the whole skill dir `skills/finops-rightsizing-advisor/` (SKILL.md + `rightsize.py`) |
 | **Scheduled task** `FinOps: Cost Anomaly Detection (Daily)` | daily scan from [`scheduled-tasks/cost-anomaly-daily.yaml`](scheduled-tasks/cost-anomaly-daily.yaml) — alerts only on a spike |
 | **Scheduled task** `FinOps: Rightsizing Review (Weekly)` | weekly review from [`scheduled-tasks/rightsizing-weekly.yaml`](scheduled-tasks/rightsizing-weekly.yaml) — ranked savings opportunities |
 | **RBAC** (optional) | Cost Management Reader on the agent MI when `MI_OBJECT_ID` is set |
@@ -114,13 +114,13 @@ If you only want the skill (no scheduled task), use one of these instead of `ins
 
 ### Option 1 — MCP `sre-agent-skills` tool (validated path)
 
-This is what was used to install and validate `cost-anomaly-detection` on a live agent. It uploads a
+This is what was used to install and validate `finops-cost-anomaly-detection` on a live agent. It uploads a
 single self-contained skill blob (the detector is embedded inline in the skill body and written to
 `detect.py` in the sandbox at runtime), so no separate reference-file upload is needed.
 
 1. Point the `sre-agent` MCP server at your deployed agent (already authenticated via `az login`).
 2. Call the `sre-agent-skills` tool with `action: create`, passing:
-   - `name`: `cost-anomaly-detection`
+   - `name`: `finops-cost-anomaly-detection`
    - `description`: short summary
    - `content`: the SKILL.md body **with the contents of `detect.py` embedded inline** as a Python
      block the agent writes to `detect.py` before running it.
@@ -128,7 +128,7 @@ single self-contained skill blob (the detector is embedded inline in the skill b
 
 ### Option 2 — `srectl` (directory-based, requires building Agent.Cli)
 
-`srectl skill apply --name cost-anomaly-detection` installs directly from this plugin's
+`srectl skill apply --name finops-cost-anomaly-detection` installs directly from this plugin's
 `skills/<name>/` directory (carrying `SKILL.md` **and** the bundled `detect.py` reference file, so no
 inlining is needed). This is the cleaner long-term path.
 
@@ -143,7 +143,7 @@ identity (see Prerequisites above) — otherwise `costInUSD` is null and no cost
 
 ## Validation status
 
-`cost-anomaly-detection` was validated **end-to-end on a live subscription** (`93cba93f…`):
+`finops-cost-anomaly-detection` was validated **end-to-end on a live subscription** (`93cba93f…`):
 
 - Pulled 3,217 real Consumption UsageDetails line items (4 pages paginated, 13 days).
 - Detector imported and ran clean on real data (0 anomalies — stable sub, expected).
@@ -155,7 +155,7 @@ All 5 validation parts passed. The **daily proactive scheduled task** is also re
 on the live agent (`FinOps: Cost Anomaly Detection (Daily)`, cron `0 14 * * *`), and the whole pack
 has been installed end-to-end via [`install-api.sh`](install-api.sh) against a live agent.
 
-`rightsizing-advisor` was validated to the **same level** — 15 offline unit tests plus a live
+`finops-rightsizing-advisor` was validated to the **same level** — 15 offline unit tests plus a live
 end-to-end run on the same subscription (`93cba93f…`):
 
 - Pulled **8 real Azure Advisor cost recs** (unattached disk, 3 empty App Service plans, 4 AKS).
@@ -179,5 +179,5 @@ Both skills' logic is pure Python and offline-testable (`detect.py`, `rightsize.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/          # 23 tests: 8 for cost-anomaly-detection, 15 for rightsizing-advisor
+pytest tests/          # 23 tests: 8 for finops-cost-anomaly-detection, 15 for finops-rightsizing-advisor
 ```

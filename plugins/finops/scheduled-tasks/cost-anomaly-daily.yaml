@@ -1,0 +1,48 @@
+# Proactive daily cost-anomaly scan.
+#
+# Applied by install.sh via `srectl scheduledtask apply --file`. The installer
+# renders the __PLACEHOLDER__ tokens from environment variables before applying;
+# you can also copy this file, fill the tokens in by hand, and apply it directly.
+#
+# Apply is upsert-by-name, so re-running is idempotent.
+apiVersion: azuresre.ai/v1
+kind: ScheduledTask
+metadata:
+  name: Cost Anomaly Detection (Daily)
+  owner: __ALERT_EMAIL__
+  tags:
+    - finops
+    - cost-anomaly-detection
+spec:
+  name: Cost Anomaly Detection (Daily)
+  description: >-
+    Proactive daily cost-anomaly scan using the cost-anomaly-detection skill.
+    Reports only when a spike is detected and correlates it to the causing change.
+  agent: __AGENT_NAME__
+  cron: __CRON__
+  modelTier: ReasoningHeavy
+  agentPrompt: |
+    Run the `cost-anomaly-detection` skill for subscription __SUB_ID__. Read-only.
+    Follow the skill's procedure exactly:
+
+    1. Load the skill — read its SKILL.md so you use the bundled detector and steps.
+    2. Step 1 (pull): GET Consumption UsageDetails (ActualCost) for the last 35 days via
+       `az rest --method get`, paginate `nextLink`, and flatten each row to
+       {date, cost, meterCategory, resourceGroup, resourceId, tags}.
+    3. Step 2 (detect): write the skill's embedded detect.py to the sandbox and run
+       `detect_anomalies(line_items)` with defaults (baseline_days=28, k=3.0,
+       min_delta_usd=5.0, wow_ratio=1.5). Keep assume_last_partial=True so the partial
+       newest billing day is excluded.
+    4. Step 3 (correlate): for EACH anomaly, search az subscription/resource-group
+       deployments, activity-log write ops, and GitHub commits + merged PRs
+       (repo __GITHUB_REPO__) within +/-1 day of the spike date, and attach the most
+       likely cause.
+    5. Step 4 (report):
+       - If NO anomalies are detected, reply with a single line
+         "No cost anomalies detected for <date>." and stop. Do not email.
+       - If one or more anomalies ARE detected, produce a ranked table (dimension, value,
+         kind, current_usd, baseline_mean_usd, dod_delta_usd, %change, candidate cause) and
+         email the report to __ALERT_EMAIL__ with subject "Cost anomaly detected — <date>"
+         and High importance.
+
+    Read-only only. Do not use any write/POST Azure operations.

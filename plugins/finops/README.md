@@ -35,9 +35,48 @@ read-only tool gate. The Cost Management **Query API is POST-based and stays blo
 required** — line items are aggregated / detected client-side in the sandbox. (Legacy
 `az consumption usage list` returns null under MCA modern billing and is not used.)
 
-## Install
+## Install everything (recommended)
 
-You have two ways to register the skill onto an agent. No product build or redeploy is required.
+This plugin ships as a **package**: one command installs the skill, the proactive daily scheduled
+task, and (optionally) the RBAC grant. Re-running is safe — both `srectl skill apply` and
+`srectl scheduledtask apply` upsert by name.
+
+```bash
+# From this directory (plugins/finops). Point srectl at your agent first
+# (srectl init --resource-url <endpoint>, or pass RESOURCE_URL=).
+AGENT_NAME="My Agent" SUB_ID=<subscription-id> ./install.sh
+
+# Also perform the Cost Management Reader grant automatically:
+MI_OBJECT_ID=<agent-mi-object-id> AGENT_NAME="My Agent" SUB_ID=<sub> ./install.sh
+```
+
+What it sets up:
+
+| Component | What / where |
+|-----------|--------------|
+| **Skill** `cost-anomaly-detection` | `srectl skill apply` from `skills/cost-anomaly-detection/` (SKILL.md + `detect.py`) |
+| **Scheduled task** "Cost Anomaly Detection (Daily)" | `srectl scheduledtask apply` from [`scheduled-tasks/cost-anomaly-daily.yaml`](scheduled-tasks/cost-anomaly-daily.yaml) — daily scan, alerts only on a spike |
+| **RBAC** (optional) | Cost Management Reader on the agent MI when `MI_OBJECT_ID` is set |
+
+Configuration (all optional, shown with defaults): `AGENT_NAME`, `SUB_ID`, `CRON="0 14 * * *"`
+(daily 14:00 UTC), `ALERT_EMAIL`, `GITHUB_REPO`, `MI_OBJECT_ID`, `RESOURCE_URL`.
+
+> The installer uses `srectl`, which must be built from `Agent.Cli` in the `sreagent-runtime` repo
+> (requires the private Antares Azure DevOps NuGet feed and .NET SDK `10.0.301`). If you can't build
+> it, use the manual MCP path below.
+
+## Proactive monitoring
+
+The bundled scheduled task runs the skill on a daily cron and **reports only when a spike is
+detected** (otherwise it emits a single "no anomalies" line and stays quiet). On a detection it
+correlates the spike to deployments / activity-log writes / GitHub merges and emails a ranked report
+to `ALERT_EMAIL` with High importance. Edit the cron/agent/email in
+[`scheduled-tasks/cost-anomaly-daily.yaml`](scheduled-tasks/cost-anomaly-daily.yaml) or override via
+the installer's environment variables. Manage it with `srectl scheduledtask list|pause|resume|get`.
+
+## Install the skill only (manual)
+
+If you only want the skill (no scheduled task), use one of these instead of `install.sh`.
 
 ### Option 1 — MCP `sre-agent-skills` tool (validated path)
 
@@ -78,7 +117,8 @@ identity (see Prerequisites above) — otherwise `costInUSD` is null and no cost
   `spike`, ranked #1 by impact (`current $227.11` / `baseline $17.71` / `Δ +$209.40`, +1182%).
 - Correlation join queried deployments + activity log + GitHub PRs/commits for the spike window.
 
-All 5 validation parts passed.
+All 5 validation parts passed. The **daily proactive scheduled task** is also registered and Active
+on the live agent (`Cost Anomaly Detection (Daily)`, cron `0 14 * * *`).
 
 ## Test
 

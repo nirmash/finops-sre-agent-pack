@@ -8,16 +8,17 @@
 apiVersion: azuresre.ai/v1
 kind: ScheduledTask
 metadata:
-  name: Cost Anomaly Detection (Daily)
+  name: "FinOps: Cost Anomaly Detection (Daily)"
   owner: __ALERT_EMAIL__
   tags:
     - finops
     - cost-anomaly-detection
 spec:
-  name: Cost Anomaly Detection (Daily)
+  name: "FinOps: Cost Anomaly Detection (Daily)"
   description: >-
-    Proactive daily cost-anomaly scan using the cost-anomaly-detection skill.
-    Reports only when a spike is detected and correlates it to the causing change.
+    Part of the FinOps pack — installed with the cost-anomaly-detection skill.
+    Proactive daily cost-anomaly scan; reports only when a spike is detected and
+    correlates it to the causing change.
   agent: __AGENT_NAME__
   cron: __CRON__
   modelTier: ReasoningHeavy

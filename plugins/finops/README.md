@@ -38,32 +38,61 @@ required** — line items are aggregated / detected client-side in the sandbox. 
 ## Install everything (recommended)
 
 This plugin ships as a **package**: one command installs the skill, the proactive daily scheduled
-task, and (optionally) the RBAC grant. Re-running is safe — both `srectl skill apply` and
-`srectl scheduledtask apply` upsert by name.
+task, and (optionally) the RBAC grant. The proactive task is named **`FinOps: Cost Anomaly Detection
+(Daily)`** so it's clear in the agent's Scheduled Tasks list that it belongs to the FinOps pack and
+was installed alongside the skill.
+
+### Option A — API installer (no srectl, recommended)
+
+[`install-api.sh`](install-api.sh) installs everything by calling the agent's own management API
+directly (the same control-plane `srectl` uses) — so it needs only `az` (logged in), `curl`, and
+`python3`. No .NET build, no private NuGet feed. It (1) registers this repo as a plugin marketplace,
+(2) installs the `finops` plugin (the server clones the repo and copies the whole skill dir —
+`SKILL.md` + `detect.py`), and (3) upserts the daily scheduled task. Re-running is safe.
 
 ```bash
-# From this directory (plugins/finops). Point srectl at your agent first
-# (srectl init --resource-url <endpoint>, or pass RESOURCE_URL=).
+# Your az-login identity must own ARM write on the agent (the resource owner does).
+AGENT_RESOURCE_ID=/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.App/agents/<agent> \
+  ./install-api.sh
+
+# While this repo is private, pass a GitHub PAT so the server can clone it:
+GITHUB_PAT=$(gh auth token) AGENT_RESOURCE_ID=<id> ./install-api.sh
+
+# Also grant Cost Management Reader to the agent MI automatically:
+MI_OBJECT_ID=<agent-mi-object-id> AGENT_RESOURCE_ID=<id> ./install-api.sh
+```
+
+Configuration (all optional, shown with defaults): `AGENT_RESOURCE_ID`/`ENDPOINT`,
+`MARKETPLACE_NAME=finops-pack`, `PLUGIN_NAME=finops`, `REPO_SLUG=nirmash/finops-sre-agent-pack`,
+`GITHUB_PAT`, `TASK_NAME`, `CRON="0 14 * * *"` (daily 14:00 UTC), `AGENT_NAME`, `SUB_ID`,
+`ALERT_EMAIL`, `GITHUB_REPO`, `MI_OBJECT_ID`.
+
+> Once this repo is public, drop `GITHUB_PAT` — the server clones it with the host's default GitHub
+> identity.
+
+### Option B — srectl installer
+
+[`install.sh`](install.sh) does the same thing via `srectl` (skill apply + scheduledtask apply,
+upsert by name). Point srectl at your agent first (`srectl init --resource-url <endpoint>`).
+
+```bash
 AGENT_NAME="My Agent" SUB_ID=<subscription-id> ./install.sh
 
 # Also perform the Cost Management Reader grant automatically:
 MI_OBJECT_ID=<agent-mi-object-id> AGENT_NAME="My Agent" SUB_ID=<sub> ./install.sh
 ```
 
-What it sets up:
+What both installers set up:
 
 | Component | What / where |
 |-----------|--------------|
-| **Skill** `cost-anomaly-detection` | `srectl skill apply` from `skills/cost-anomaly-detection/` (SKILL.md + `detect.py`) |
-| **Scheduled task** "Cost Anomaly Detection (Daily)" | `srectl scheduledtask apply` from [`scheduled-tasks/cost-anomaly-daily.yaml`](scheduled-tasks/cost-anomaly-daily.yaml) — daily scan, alerts only on a spike |
+| **Skill** `cost-anomaly-detection` | the whole skill dir `skills/cost-anomaly-detection/` (SKILL.md + `detect.py`) |
+| **Scheduled task** `FinOps: Cost Anomaly Detection (Daily)` | daily scan from [`scheduled-tasks/cost-anomaly-daily.yaml`](scheduled-tasks/cost-anomaly-daily.yaml) — alerts only on a spike; the `FinOps:` prefix marks it as part of this pack |
 | **RBAC** (optional) | Cost Management Reader on the agent MI when `MI_OBJECT_ID` is set |
 
-Configuration (all optional, shown with defaults): `AGENT_NAME`, `SUB_ID`, `CRON="0 14 * * *"`
-(daily 14:00 UTC), `ALERT_EMAIL`, `GITHUB_REPO`, `MI_OBJECT_ID`, `RESOURCE_URL`.
-
-> The installer uses `srectl`, which must be built from `Agent.Cli` in the `sreagent-runtime` repo
+> `install.sh` uses `srectl`, which must be built from `Agent.Cli` in the `sreagent-runtime` repo
 > (requires the private Antares Azure DevOps NuGet feed and .NET SDK `10.0.301`). If you can't build
-> it, use the manual MCP path below.
+> it, use Option A (`install-api.sh`) or the manual MCP path below.
 
 ## Proactive monitoring
 
@@ -118,7 +147,8 @@ identity (see Prerequisites above) — otherwise `costInUSD` is null and no cost
 - Correlation join queried deployments + activity log + GitHub PRs/commits for the spike window.
 
 All 5 validation parts passed. The **daily proactive scheduled task** is also registered and Active
-on the live agent (`Cost Anomaly Detection (Daily)`, cron `0 14 * * *`).
+on the live agent (`FinOps: Cost Anomaly Detection (Daily)`, cron `0 14 * * *`), and the whole pack
+has been installed end-to-end via [`install-api.sh`](install-api.sh) against a live agent.
 
 ## Test
 

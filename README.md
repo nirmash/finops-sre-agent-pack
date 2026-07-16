@@ -14,7 +14,7 @@ Structure mirrors [Azure/sre-agent-plugins](https://github.com/Azure/sre-agent-p
 
 | Plugin | Description |
 |--------|-------------|
-| [`finops`](plugins/finops/README.md) | **Cost anomaly package** — the `cost-anomaly-detection` skill + a proactive daily scheduled task, installable with one command ([`plugins/finops/install.sh`](plugins/finops/install.sh)). Plus planned rightsizing, showback, budget governance, FinOps-for-AI, reporting, and cost-vs-reliability skills. |
+| [`finops`](plugins/finops/README.md) | **Cost anomaly package** — the `cost-anomaly-detection` skill + a proactive daily scheduled task (`FinOps: Cost Anomaly Detection (Daily)`), installable with one command via the agent API ([`plugins/finops/install-api.sh`](plugins/finops/install-api.sh), no srectl needed) or [`install.sh`](plugins/finops/install.sh). Plus planned rightsizing, showback, budget governance, FinOps-for-AI, reporting, and cost-vs-reliability skills. |
 
 ## Adding plugins
 

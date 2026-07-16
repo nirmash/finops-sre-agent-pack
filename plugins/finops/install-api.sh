@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+#
+# install-api.sh — client-side installer for the FinOps cost-anomaly package.
+#
+# Installs EVERYTHING via the SRE Agent's own management API — no srectl, no .NET,
+# no private NuGet feed. It does exactly what srectl does under the hood:
+#   * gets an AAD token for the SRE Agent first-party scope (https://azuresre.dev/.default)
+#   * calls the agent's data-plane endpoint (RBAC-guarded by AuthorizeArmOperation)
+#
+# It performs three control-plane operations:
+#   1. Register this repo as a plugin marketplace         POST /api/v2/plugins/marketplaces
+#   2. Install the `finops` plugin (server clones + copies POST .../plugins/finops/install
+#      the whole skill dir: SKILL.md + detect.py)
+#   3. Upsert the daily "Cost Anomaly Detection" task     POST/PUT /api/v1/scheduledtasks
+#
+# Caller identity (az login) must hold the agent's ARM write actions
+# (AgentExtendedAgentWrite, AgentScheduledTaskWrite) — the resource owner does.
+#
+# Requires: az (logged in), curl, python3.
+#
+# Usage:
+#   AGENT_RESOURCE_ID=/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.App/agents/<name> \
+#     ./install-api.sh
+#   # or pass the endpoint directly:
+#   ENDPOINT=https://<agent>.azuresre.ai ./install-api.sh
+#   # private repo clone (until the repo is public) needs a GitHub PAT:
+#   GITHUB_PAT=<pat> AGENT_RESOURCE_ID=<id> ./install-api.sh
+#
+set -euo pipefail
+
+# ---- Configuration (override via environment) -------------------------------
+AGENT_RESOURCE_ID="${AGENT_RESOURCE_ID:-}"       # ARM id; endpoint is derived from it
+ENDPOINT="${ENDPOINT:-}"                          # or pass the data-plane URL directly
+TOKEN_RESOURCE="${TOKEN_RESOURCE:-https://azuresre.dev}"
+
+MARKETPLACE_NAME="${MARKETPLACE_NAME:-finops-pack}"
+PLUGIN_NAME="${PLUGIN_NAME:-finops}"
+SKILL_NAME="${SKILL_NAME:-cost-anomaly-detection}"
+REPO_SLUG="${REPO_SLUG:-nirmash/finops-sre-agent-pack}"   # owner/repo (marketplace sourceUrl)
+SOURCE_FORMAT="${SOURCE_FORMAT:-copilot}"
+GITHUB_PAT="${GITHUB_PAT:-}"                      # set for a private repo; else host-default identity
+
+TASK_NAME="${TASK_NAME:-FinOps: Cost Anomaly Detection (Daily)}"
+AGENT_NAME="${AGENT_NAME:-Nir Mashkowski}"
+SUB_ID="${SUB_ID:-93cba93f-571e-44e9-ac0a-a2987b58848c}"
+CRON="${CRON:-0 14 * * *}"
+ALERT_EMAIL="${ALERT_EMAIL:-nimashkowski@microsoft.com}"
+GITHUB_REPO="${GITHUB_REPO:-nirmash/azure-sre-agent-sandbox}"   # repo searched for change correlation
+MI_OBJECT_ID="${MI_OBJECT_ID:-}"                 # agent MI objectId; set to auto-grant Cost Management Reader
+
+say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
+ok()   { printf '\033[1;32m  ✓ %s\033[0m\n' "$*"; }
+warn() { printf '\033[1;33m  ! %s\033[0m\n' "$*"; }
+die()  { printf '\033[1;31m  ✗ %s\033[0m\n' "$*" >&2; exit 1; }
+
+# ---- 0. Preflight -----------------------------------------------------------
+say "Preflight"
+command -v az     >/dev/null 2>&1 || die "az (Azure CLI) not found."
+command -v curl   >/dev/null 2>&1 || die "curl not found."
+command -v python3 >/dev/null 2>&1 || die "python3 not found."
+az account show >/dev/null 2>&1 || die "Not logged in to Azure. Run 'az login' first."
+
+if [ -z "$ENDPOINT" ]; then
+  [ -n "$AGENT_RESOURCE_ID" ] || die "Set ENDPOINT or AGENT_RESOURCE_ID."
+  say "Resolving agent endpoint from resource id"
+  ENDPOINT="$(az resource show --ids "$AGENT_RESOURCE_ID" --query properties.agentEndpoint -o tsv)"
+  [ -n "$ENDPOINT" ] || die "Could not read properties.agentEndpoint from $AGENT_RESOURCE_ID"
+fi
+ENDPOINT="${ENDPOINT%/}"
+ok "Endpoint: $ENDPOINT"
+
+TOKEN="$(az account get-access-token --resource "$TOKEN_RESOURCE" --query accessToken -o tsv)" \
+  || die "Failed to mint token for $TOKEN_RESOURCE"
+[ -n "$TOKEN" ] || die "Empty access token."
+ok "Access token acquired for $TOKEN_RESOURCE"
+
+# api METHOD PATH [json-body-file]  -> sets HTTP_CODE and RESP_BODY
+HTTP_CODE=""
+RESP_BODY=""
+api() {
+  local method="$1" path="$2" body="${3:-}"
+  local args=(-s -w '\n%{http_code}' -X "$method" -H "Authorization: Bearer $TOKEN")
+  if [ -n "$body" ]; then args+=(-H "Content-Type: application/json" --data-binary @"$body"); fi
+  local out; out="$(curl "${args[@]}" "$ENDPOINT$path")"
+  HTTP_CODE="${out##*$'\n'}"
+  RESP_BODY="${out%$'\n'*}"
+}
+
+# ---- 1. RBAC (optional) -----------------------------------------------------
+say "Cost Management Reader RBAC"
+if [ -n "$MI_OBJECT_ID" ]; then
+  if az role assignment create --assignee-object-id "$MI_OBJECT_ID" \
+        --assignee-principal-type ServicePrincipal \
+        --role "Cost Management Reader" --scope "/subscriptions/${SUB_ID}" >/dev/null 2>&1; then
+    ok "Granted Cost Management Reader to $MI_OBJECT_ID"
+  else
+    warn "Grant not applied (already assigned, or you can't assign roles here)."
+  fi
+else
+  warn "MI_OBJECT_ID not set — skipping grant. The skill needs Cost Management Reader on the"
+  warn "agent MI or costInUSD is null. Grant it once with:"
+  printf '      az role assignment create --assignee <AGENT_MI_OBJECT_ID> \\\n'
+  printf '        --role "Cost Management Reader" --scope /subscriptions/%s\n' "$SUB_ID"
+fi
+
+# ---- 2. Register the marketplace -------------------------------------------
+say "Registering marketplace '$MARKETPLACE_NAME' -> $REPO_SLUG"
+mk_body="$(mktemp)"; trap 'rm -f "$mk_body" "${task_body:-}"' EXIT
+MARKETPLACE_NAME="$MARKETPLACE_NAME" REPO_SLUG="$REPO_SLUG" SOURCE_FORMAT="$SOURCE_FORMAT" \
+GITHUB_PAT="$GITHUB_PAT" python3 - "$mk_body" <<'PY'
+import json, os, sys
+owner = os.environ["REPO_SLUG"].split("/", 1)[0]
+spec = {
+    "sourceType": "github",
+    "sourceUrl": os.environ["REPO_SLUG"],
+    "owner": {"name": owner},
+    "description": "FinOps cost-anomaly pack",
+    "sourceFormat": os.environ["SOURCE_FORMAT"],
+}
+pat = os.environ.get("GITHUB_PAT") or ""
+if pat:
+    spec["credentials"] = {"authMethod": "pat", "pat": pat}
+doc = {"metadata": {"name": os.environ["MARKETPLACE_NAME"]}, "spec": spec}
+open(sys.argv[1], "w").write(json.dumps(doc))
+PY
+api POST /api/v2/plugins/marketplaces "$mk_body"; resp="$RESP_BODY"
+case "$HTTP_CODE" in
+  200|201|202) ok "Marketplace upserted (HTTP $HTTP_CODE)";;
+  *) die "Marketplace register failed (HTTP $HTTP_CODE): $resp";;
+esac
+
+# Wait for the background clone to reach Ready
+say "Waiting for repo clone"
+for i in $(seq 1 30); do
+  api GET "/api/v2/plugins/marketplaces/${MARKETPLACE_NAME}"; resp="$RESP_BODY"
+  status="$(printf '%s' "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("spec",{}).get("cloneStatus",""))' 2>/dev/null || true)"
+  case "$status" in
+    Ready)  ok "Clone Ready"; break;;
+    Failed) err="$(printf '%s' "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("spec",{}).get("cloneError",""))' 2>/dev/null)"; die "Clone Failed: $err";;
+    *)      printf '  … cloneStatus=%s (%d/30)\n' "${status:-?}" "$i"; sleep 4;;
+  esac
+  [ "$i" -eq 30 ] && die "Timed out waiting for clone (last status: ${status:-?})"
+done
+
+# ---- 3. Install the plugin --------------------------------------------------
+say "Installing plugin '$PLUGIN_NAME'"
+api POST "/api/v2/plugins/marketplaces/${MARKETPLACE_NAME}/plugins/${PLUGIN_NAME}/install"; resp="$RESP_BODY"
+case "$HTTP_CODE" in
+  200|201|202) ok "Plugin install requested (HTTP $HTTP_CODE)";;
+  *) die "Plugin install failed (HTTP $HTTP_CODE): $resp";;
+esac
+
+# ---- 4. Upsert the scheduled task ------------------------------------------
+say "Upserting scheduled task '$TASK_NAME'"
+read -r -d '' PROMPT <<EOF || true
+Run the \`cost-anomaly-detection\` skill for subscription ${SUB_ID}. Read-only. Follow the skill's procedure exactly:
+
+1. Load the skill — read its SKILL.md so you use the bundled detector and steps.
+2. Step 1 (pull): GET Consumption UsageDetails (ActualCost) for the last 35 days via \`az rest --method get\`, paginate nextLink, and flatten each row to {date, cost, meterCategory, resourceGroup, resourceId, tags}.
+3. Step 2 (detect): write the skill's embedded detect.py to the sandbox and run detect_anomalies(line_items) with defaults (baseline_days=28, k=3.0, min_delta_usd=5.0, wow_ratio=1.5). Keep assume_last_partial=True so the partial newest billing day is excluded.
+4. Step 3 (correlate): for EACH anomaly, search az subscription/resource-group deployments, activity-log write ops, and GitHub commits + merged PRs (repo ${GITHUB_REPO}) within +/-1 day of the spike date, and attach the most likely cause.
+5. Step 4 (report):
+   - If NO anomalies are detected, reply with a single line "No cost anomalies detected for <date>." and stop. Do not email.
+   - If one or more anomalies ARE detected, produce a ranked table (dimension, value, kind, current_usd, baseline_mean_usd, dod_delta_usd, %change, candidate cause) and email the report to ${ALERT_EMAIL} with subject "Cost anomaly detected — <date>" and High importance.
+
+Read-only only. Do not use any write/POST Azure operations.
+EOF
+
+# Does a task with this name already exist?
+api GET /api/v1/scheduledtasks; existing="$RESP_BODY"
+TASK_ID="$(printf '%s' "$existing" | TASK_NAME="$TASK_NAME" python3 -c '
+import json,os,sys
+name=os.environ["TASK_NAME"]
+try: data=json.load(sys.stdin)
+except Exception: data=[]
+tasks=data if isinstance(data,list) else data.get("value",[])
+print(next((t.get("id","") for t in tasks if t.get("name")==name), ""))' 2>/dev/null || true)"
+
+task_body="$(mktemp)"
+TASK_NAME="$TASK_NAME" CRON="$CRON" AGENT_NAME="$AGENT_NAME" PROMPT="$PROMPT" python3 - "$task_body" <<'PY'
+import json, os, sys
+doc = {
+    "name": os.environ["TASK_NAME"],
+    "description": "Part of the FinOps pack — installed with the cost-anomaly-detection skill. Proactive daily cost-anomaly scan; reports only when a spike is detected.",
+    "cronExpression": os.environ["CRON"],
+    "agentPrompt": os.environ["PROMPT"],
+    "agent": os.environ["AGENT_NAME"],
+    "agentMode": "autonomous",
+}
+open(sys.argv[1], "w").write(json.dumps(doc))
+PY
+
+if [ -n "$TASK_ID" ]; then
+  api PUT "/api/v1/scheduledtasks/${TASK_ID}" "$task_body"; resp="$RESP_BODY"
+  case "$HTTP_CODE" in 200|201|204) ok "Scheduled task updated ($TASK_ID)";; *) die "Task update failed (HTTP $HTTP_CODE): $resp";; esac
+else
+  api POST /api/v1/scheduledtasks "$task_body"; resp="$RESP_BODY"
+  case "$HTTP_CODE" in 200|201) ok "Scheduled task created";; *) die "Task create failed (HTTP $HTTP_CODE): $resp";; esac
+fi
+
+# ---- 5. Verify --------------------------------------------------------------
+say "Verifying"
+api GET /api/v2/plugins/installations; resp="$RESP_BODY"
+printf '%s' "$resp" | grep -qi "$PLUGIN_NAME" && ok "plugin installation present" || warn "plugin not visible yet (install may still be finishing)"
+api GET /api/v1/scheduledtasks; resp="$RESP_BODY"
+printf '%s' "$resp" | grep -qi "Cost Anomaly Detection" && ok "scheduled task present" || warn "task not visible"
+
+say "Done — cost-anomaly package installed via the agent API."
+printf '  • Skill  : %s (from marketplace %s -> %s)\n' "$SKILL_NAME" "$MARKETPLACE_NAME" "$REPO_SLUG"
+printf '  • Task   : "%s" on cron "%s"\n' "$TASK_NAME" "$CRON"

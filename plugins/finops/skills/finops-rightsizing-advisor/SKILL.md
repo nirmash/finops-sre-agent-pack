@@ -24,10 +24,12 @@ For cost *spikes* and their root cause, use `finops-cost-anomaly-detection` inst
 
 ## Scope
 
-VM / disk / storage-tier / App Service plan / node-level rightsizing works today. **Pod- and
-namespace-level AKS rightsizing needs a Log Analytics Reader grant + `api.loganalytics.io` scope on
-the agent identity** (Container Insights KQL is otherwise blocked) — out of scope here until that
-grant lands.
+VM / disk / storage-tier / App Service plan / node-level rightsizing works today, plus **Azure
+Container Apps idle detection**: unused Container Apps environments (empty, or every app received
+zero traffic) and always-on container apps (`minReplicas>=1`) that keep billing with no requests.
+**Pod- and namespace-level AKS rightsizing needs a Log Analytics Reader grant + `api.loganalytics.io`
+scope on the agent identity** (Container Insights KQL is otherwise blocked) — out of scope here until
+that grant lands.
 
 ## Procedure
 
@@ -46,19 +48,25 @@ Flatten each recommendation to the shape `rightsize.py` expects:
 ### Step 2 — Pull inventory (Resource Graph) for idle patterns Advisor misses
 
 ```bash
-az graph query -q "Resources | where type in~ ('microsoft.compute/virtualmachines','microsoft.compute/disks','microsoft.web/serverfarms') | project id, type, sku=tostring(sku.name), properties, tags" --first 1000 -o json
+az graph query -q "Resources | where type in~ ('microsoft.compute/virtualmachines','microsoft.compute/disks','microsoft.web/serverfarms','microsoft.app/managedenvironments','microsoft.app/containerapps') | project id, type, sku=tostring(sku.name), properties, tags" --first 1000 -o json
 ```
 
 On large subscriptions Resource Graph caps at 1000 rows per page — **paginate with `--skip-token`**
 (from the response) until it's empty so you don't miss resources.
 
-Flatten each row to `{resourceId, type, sku, powerState, diskState, numberOfSites, tags}`:
+Flatten each row to `{resourceId, type, sku, powerState, diskState, numberOfSites, environmentId, minReplicas, tags}`:
 
 - **VM** `powerState` from `properties.extended.instanceView.powerState.code` (e.g.
   `PowerState/stopped` vs `PowerState/deallocated`). A **Stopped (not Deallocated)** VM still bills
   for compute.
 - **Disk** `diskState` from `properties.diskState` (`Unattached` disks are pure waste).
 - **App Service plan** `numberOfSites` from `properties.numberOfSites` (0 = empty plan).
+- **Container Apps environment** (`microsoft.app/managedenvironments`) — no extra field; the ranker
+  counts child apps from the inventory to spot **empty environments**.
+- **Container App** (`microsoft.app/containerapps`) `environmentId` from
+  `properties.environmentId` (fall back to `properties.managedEnvironmentId`) and `minReplicas` from
+  `properties.template.scale.minReplicas`. An app with `minReplicas>=1` is **always-on** (bills even
+  with zero traffic).
 
 ### Step 3 — Pull utilization (Azure Monitor) for VM candidates
 
@@ -73,6 +81,18 @@ Reduce each series to `{cpu_p95, cpu_avg, mem_p95, sample_days}` (percent, 0–1
 95th percentile of the hourly Average series; `sample_days` is the number of distinct days covered.
 Skip resources with fewer than `min_sample_days` (default 7) of data — the skill treats them as
 unvalidated rather than guessing.
+
+### Step 3b — Pull request activity (Azure Monitor) for Container Apps
+
+For each container app, pull the trailing `Requests` metric so idle apps/environments are validated
+against **real traffic** (not guessed). Without this signal an app is left unvalidated, never flagged.
+
+```bash
+az monitor metrics list --resource <containerapp-resource-id> --metric "Requests" --interval P1D --start-time <UTC-14d> --aggregation Total -o json
+```
+
+Sum the Total series into `{resourceId: {"requests_total": <sum>, "sample_days": <distinct days>}}`.
+`requests_total == 0` over enough days means no traffic. This map is passed as `activity=` below.
 
 ### Step 4 — Pull per-resource monthly cost (optional but recommended)
 
@@ -96,6 +116,7 @@ from rightsize import recommend_rightsizing
 recs = recommend_rightsizing(
     resources=resources,       # from Step 2
     utilization=utilization,   # from Step 3  {resourceId: {...}}
+    activity=activity,         # from Step 3b {resourceId: {"requests_total", "sample_days"}}
     costs=costs,               # from Step 4  {resourceId: monthly_usd}
     advisor=advisor,           # from Step 1
 )   # returns findings ranked by estMonthlySavingsUsd desc
@@ -103,7 +124,8 @@ recs = recommend_rightsizing(
 
 `recommend_rightsizing` handles all classification and validation:
 
-- **kind** is `idle` (unattached disk, stopped-not-deallocated VM, empty plan, or p95 CPU below
+- **kind** is `idle` (unattached disk, stopped-not-deallocated VM, empty App Service plan, empty or
+  no-traffic Container Apps environment, always-on container app with no requests, or p95 CPU below
   `cpu_idle_pct`=5%), `oversized` (p95 CPU below `cpu_underutil_pct`=20%), or `advisor` (an Advisor
   rec with no independent signal).
 - **validated** is `True` when utilization/inventory backs the call, `False` when utilization

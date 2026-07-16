@@ -222,11 +222,12 @@ Run the \`finops-rightsizing-advisor\` skill for subscription ${SUB_ID}. Read-on
 
 1. Load the skill — read its SKILL.md so you use the bundled rightsize.py and steps.
 2. Step 1 (Advisor): \`az advisor recommendation list --category Cost\` and flatten to {resourceId, problem, recommendation, targetSku, savingsUsd}.
-3. Step 2 (inventory): \`az graph query\` for VMs, disks, and App Service plans; flatten to {resourceId, type, sku, powerState, diskState, numberOfSites, tags}.
+3. Step 2 (inventory): \`az graph query\` for VMs, disks, App Service plans, and Azure Container Apps (managedenvironments + containerapps); flatten to {resourceId, type, sku, powerState, diskState, numberOfSites, environmentId, minReplicas, tags}.
 4. Step 3 (utilization): for each VM candidate, \`az monitor metrics list\` "Percentage CPU" over 14 days; reduce to {cpu_p95, cpu_avg, mem_p95, sample_days}.
-5. Step 4 (cost): GET Consumption UsageDetails (ActualCost) for ~30 days via \`az rest --method get\`, paginate nextLink, aggregate costInUSD by resourceId into {resourceId: monthly_usd}.
-6. Step 5 (rank): write the skill's rightsize.py to the sandbox and run recommend_rightsizing(resources=..., utilization=..., costs=..., advisor=...).
-7. Step 6 (report):
+5. Step 3b (activity): for each Container App, \`az monitor metrics list\` "Requests" (Total, P1D) over 14 days; reduce to {resourceId: {requests_total, sample_days}} — this flags unused ACA environments and always-on apps with no traffic.
+6. Step 4 (cost): GET Consumption UsageDetails (ActualCost) for ~30 days via \`az rest --method get\`, paginate nextLink, aggregate costInUSD by resourceId into {resourceId: monthly_usd}.
+7. Step 5 (rank): write the skill's rightsize.py to the sandbox and run recommend_rightsizing(resources=..., utilization=..., activity=..., costs=..., advisor=...).
+8. Step 6 (report):
    - If NOTHING clears the savings threshold, reply with a single line "No rightsizing opportunities above threshold this week." and stop. Do not email.
    - Otherwise produce a ranked table (resource, type, kind, current SKU, recommended action, current monthly \$, est monthly savings \$, validated, evidence) with the TOTAL estimated monthly savings at the top, mark validated=false / unvalidated rows as "verify first", and email the report to ${ALERT_EMAIL} with subject "Weekly rightsizing review — <date>" and Normal importance.
 
@@ -269,7 +270,7 @@ Idempotent weekly refresh — keep ONE report and version it:
 1. Call ListReports. If a report named exactly "${RIGHTSIZE_REPORT_NAME}" already exists, call GetReport to check it out and reuse its reportId; you will pass that reportId to SaveReport (saving a new VERSION). If it does not exist, omit reportId (create it).
 
 Gather the data NOW by running the \`finops-rightsizing-advisor\` skill's analysis (read-only):
-2. Load finops-rightsizing-advisor (read its SKILL.md) and follow its steps to produce ranked recommendations: Azure Advisor cost recs (\`az advisor recommendation list --category Cost\`); Resource Graph inventory of VMs/disks/App Service plans; per-VM "Percentage CPU" over 14 days; ~30 days of Consumption UsageDetails (ActualCost) via \`az rest --method get\` (paginate nextLink; costInUSD; resource id from properties.instanceName falling back to properties.resourceId). Then write the skill's rightsize.py to the sandbox and run recommend_rightsizing(resources=..., utilization=..., costs=..., advisor=...) to get the ranked list with estimated monthly savings.
+2. Load finops-rightsizing-advisor (read its SKILL.md) and follow its steps to produce ranked recommendations: Azure Advisor cost recs (\`az advisor recommendation list --category Cost\`); Resource Graph inventory of VMs/disks/App Service plans/Azure Container Apps (managedenvironments + containerapps; project environmentId + minReplicas); per-VM "Percentage CPU" over 14 days; per-Container-App "Requests" (Total, P1D) over 14 days into activity={resourceId:{requests_total,sample_days}} (flags unused ACA environments and always-on apps with no traffic); ~30 days of Consumption UsageDetails (ActualCost) via \`az rest --method get\` (paginate nextLink; costInUSD; resource id from properties.instanceName falling back to properties.resourceId). Then write the skill's rightsize.py to the sandbox and run recommend_rightsizing(resources=..., utilization=..., activity=..., costs=..., advisor=...) to get the ranked list with estimated monthly savings.
 3. Do NOT use \`az rest --method post\` or the Cost Management Query API — POST is blocked as a write.
 
 This is a SNAPSHOT report, not a connector-backed live report:

@@ -29,16 +29,20 @@ spec:
     1. Load the skill — read its SKILL.md so you use the bundled rightsize.py and steps.
     2. Step 1 (Advisor): `az advisor recommendation list --category Cost` and flatten to
        {resourceId, problem, recommendation, targetSku, savingsUsd}.
-    3. Step 2 (inventory): `az graph query` for VMs, disks, and App Service plans; flatten to
-       {resourceId, type, sku, powerState, diskState, numberOfSites, tags}.
+    3. Step 2 (inventory): `az graph query` for VMs, disks, App Service plans, and Azure
+       Container Apps (managedenvironments + containerapps); flatten to
+       {resourceId, type, sku, powerState, diskState, numberOfSites, environmentId, minReplicas, tags}.
     4. Step 3 (utilization): for each VM candidate, `az monitor metrics list` "Percentage CPU"
        over the last 14 days; reduce to {cpu_p95, cpu_avg, mem_p95, sample_days}.
-    5. Step 4 (cost): GET Consumption UsageDetails (ActualCost) for ~30 days via
+    5. Step 3b (activity): for each Container App, `az monitor metrics list` "Requests" (Total,
+       P1D) over 14 days; reduce to {resourceId: {requests_total, sample_days}} — flags unused
+       ACA environments and always-on apps with no traffic.
+    6. Step 4 (cost): GET Consumption UsageDetails (ActualCost) for ~30 days via
        `az rest --method get`, paginate nextLink, aggregate costInUSD by resourceId into
        {resourceId: monthly_usd}.
-    6. Step 5 (rank): write the skill's rightsize.py to the sandbox and run
-       `recommend_rightsizing(resources=..., utilization=..., costs=..., advisor=...)`.
-    7. Step 6 (report):
+    7. Step 5 (rank): write the skill's rightsize.py to the sandbox and run
+       `recommend_rightsizing(resources=..., utilization=..., activity=..., costs=..., advisor=...)`.
+    8. Step 6 (report):
        - If NOTHING clears the savings threshold, reply with a single line
          "No rightsizing opportunities above threshold this week." and stop. Do not email.
        - Otherwise produce a ranked table (resource, type, kind, current SKU, recommended

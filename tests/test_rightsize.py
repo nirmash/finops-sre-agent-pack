@@ -21,6 +21,9 @@ recommend = rightsize.recommend_rightsizing
 VM = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1"
 DISK = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/disks/disk1"
 PLAN = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Web/serverfarms/plan1"
+ACA_ENV = "/subscriptions/s/resourceGroups/mcp-env-rg-001/providers/Microsoft.App/managedEnvironments/mcp-env"
+ACA_ENV2 = "/subscriptions/s/resourceGroups/extract_rg/providers/Microsoft.App/managedEnvironments/extract-env"
+ACA_APP = "/subscriptions/s/resourceGroups/mcp-env-rg-001/providers/Microsoft.App/containerApps/app1"
 
 
 def _by_id(findings):
@@ -163,3 +166,77 @@ def test_ranking_known_savings_first_desc_then_unknown():
     out = recommend(resources=res, costs=costs)
     order = [f["resourceId"] for f in out]
     assert order == [VM, DISK, PLAN]  # 200, 30, then unknown last
+
+
+# --- Azure Container Apps (ACA) idle detection ---------------------------------
+
+
+def test_empty_aca_environment_flagged_idle():
+    res = [{"resourceId": ACA_ENV, "type": "microsoft.app/managedenvironments"}]
+    out = recommend(resources=res, costs={ACA_ENV: 40.0})
+    assert out and out[0]["kind"] == "idle"
+    assert out[0]["estMonthlySavingsUsd"] == 40.0
+    assert out[0]["validated"] is True
+    assert "empty Container Apps environment" in out[0]["recommendedAction"]
+    assert "resource-graph" in out[0]["sources"]
+
+
+def test_aca_environment_with_untraffic_apps_flagged_idle():
+    res = [
+        {"resourceId": ACA_ENV, "type": "microsoft.app/managedenvironments"},
+        {"resourceId": ACA_APP, "type": "microsoft.app/containerapps",
+         "environmentId": ACA_ENV, "minReplicas": 0},
+    ]
+    activity = {ACA_APP: {"requests_total": 0, "sample_days": 14}}
+    out = recommend(resources=res, activity=activity, costs={ACA_ENV: 25.0, ACA_APP: 1.0})
+    ids = _by_id(out)
+    # Environment flagged as unused (all apps had zero traffic).
+    assert ids[ACA_ENV.lower()]["kind"] == "idle"
+    assert "none of its apps received traffic" in ids[ACA_ENV.lower()]["recommendedAction"]
+    assert "azure-monitor" in ids[ACA_ENV.lower()]["sources"]
+
+
+def test_aca_environment_with_traffic_not_flagged():
+    res = [
+        {"resourceId": ACA_ENV, "type": "microsoft.app/managedenvironments"},
+        {"resourceId": ACA_APP, "type": "microsoft.app/containerapps",
+         "environmentId": ACA_ENV, "minReplicas": 0},
+    ]
+    activity = {ACA_APP: {"requests_total": 5000, "sample_days": 14}}
+    assert recommend(resources=res, activity=activity, costs={ACA_ENV: 25.0}) == []
+
+
+def test_aca_environment_unconfirmed_activity_not_flagged():
+    # An env with an app but no request-metric coverage must not be claimed idle.
+    res = [
+        {"resourceId": ACA_ENV, "type": "microsoft.app/managedenvironments"},
+        {"resourceId": ACA_APP, "type": "microsoft.app/containerapps",
+         "environmentId": ACA_ENV, "minReplicas": 0},
+    ]
+    assert recommend(resources=res, costs={ACA_ENV: 25.0}) == []
+
+
+def test_always_on_aca_app_with_no_traffic_flagged_full_savings():
+    res = [{"resourceId": ACA_APP, "type": "microsoft.app/containerapps",
+            "environmentId": ACA_ENV, "minReplicas": 2}]
+    activity = {ACA_APP: {"requests_total": 0, "sample_days": 30}}
+    out = recommend(resources=res, activity=activity, costs={ACA_APP: 45.0})
+    assert out and out[0]["kind"] == "idle"
+    assert out[0]["estMonthlySavingsUsd"] == 45.0
+    assert "always-on" in out[0]["recommendedAction"]
+    assert out[0]["validated"] is True
+
+
+def test_scale_to_zero_aca_app_low_cost_dropped():
+    # minReplicas=0 app with no traffic scales to zero; residual cost below threshold drops it.
+    res = [{"resourceId": ACA_APP, "type": "microsoft.app/containerapps",
+            "environmentId": ACA_ENV, "minReplicas": 0}]
+    activity = {ACA_APP: {"requests_total": 0, "sample_days": 30}}
+    assert recommend(resources=res, activity=activity, costs={ACA_APP: 1.0}) == []
+
+
+def test_aca_app_insufficient_activity_days_ignored():
+    res = [{"resourceId": ACA_APP, "type": "microsoft.app/containerapps",
+            "environmentId": ACA_ENV, "minReplicas": 2}]
+    activity = {ACA_APP: {"requests_total": 0, "sample_days": 3}}
+    assert recommend(resources=res, activity=activity, costs={ACA_APP: 45.0}) == []

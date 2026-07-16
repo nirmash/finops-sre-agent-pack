@@ -22,12 +22,19 @@ Input shapes (all keyed/looked-up by resourceId, matched case-insensitively):
             "powerState": "stopped",                          # vm: running|stopped|deallocated
             "diskState": "Unattached",                        # disk: Attached|Unattached
             "numberOfSites": 0,                                # serverfarm: hosted site count
+            "environmentId": "/subscriptions/.../managedEnvironments/env1",  # containerapp: parent ACA env
+            "minReplicas": 1,                                  # containerapp: min replica count
             "tags": {"env": "prod"},                           # optional
         }
 
     utilization  {resourceId: {"cpu_p95": float, "cpu_avg": float,
                                "mem_p95": float|None, "sample_days": int}}
                  (percentages 0-100; from `az monitor metrics list`)
+
+    activity     {resourceId: {"requests_total": float, "sample_days": int}}
+                 request traffic per Azure Container App, from the Azure Monitor `Requests`
+                 metric summed over the window. Drives ACA idle detection (unused
+                 environments and always-on apps with no hits).
 
     costs        {resourceId: monthly_usd}   (aggregated from UsageDetails)
 
@@ -55,6 +62,8 @@ DEFAULT_RIGHTSIZE_SAVINGS_FRACTION = 0.5
 _VM_TYPE = "microsoft.compute/virtualmachines"
 _DISK_TYPE = "microsoft.compute/disks"
 _PLAN_TYPE = "microsoft.web/serverfarms"
+_ACA_ENV_TYPE = "microsoft.app/managedenvironments"
+_ACA_APP_TYPE = "microsoft.app/containerapps"
 
 
 def _key(resource_id) -> str:
@@ -114,6 +123,7 @@ def recommend_rightsizing(
     utilization=None,
     costs=None,
     advisor=None,
+    activity=None,
     *,
     cpu_idle_pct: float = DEFAULT_CPU_IDLE_PCT,
     cpu_underutil_pct: float = DEFAULT_CPU_UNDERUTIL_PCT,
@@ -124,6 +134,12 @@ def recommend_rightsizing(
     """Merge Advisor recs, inventory heuristics, utilization, and cost into a single
     ranked list of read-only rightsizing / idle-cleanup recommendations.
 
+    `activity` is the request-traffic signal used for Azure Container Apps idle detection:
+    {resourceId: {"requests_total": float, "sample_days": int}} from the Azure Monitor
+    `Requests` metric on each container app. It lets the skill flag unused Container Apps
+    environments (empty, or all their apps received zero traffic) and always-on container
+    apps (minReplicas>=1) that keep billing while receiving no requests.
+
     Returns a list of finding dicts sorted by estimated monthly savings (descending);
     findings whose savings can be quantified below `min_monthly_savings_usd` are dropped,
     while findings with unknown savings are kept (they cannot be ruled out) and sort last.
@@ -131,6 +147,7 @@ def recommend_rightsizing(
     resources = resources or []
     util = _index_by_id(utilization)
     cost = _index_by_id(costs)
+    activity = _index_by_id(activity)
     advisor = advisor or []
 
     findings: dict = {}
@@ -163,6 +180,43 @@ def recommend_rightsizing(
         f.validated = True                    # inventory state is a fact, not a guess
         f.evidence.append(evidence)
         f.add_source("resource-graph")
+
+    # ---- 1b. Azure Container Apps idle detection ----------------------------
+    # An unused Container Apps environment (empty, or all its apps had zero traffic)
+    # and always-on container apps (minReplicas>=1) with no requests are pure waste.
+    env_children: dict = {}
+    for res in resources:
+        if str(res.get("type") or "").lower() == _ACA_APP_TYPE:
+            env_id = res.get("environmentId")
+            if env_id:
+                env_children.setdefault(_key(env_id), []).append(res)
+
+    for res in resources:
+        rid = res.get("resourceId")
+        if not rid or _key(rid) in findings:
+            continue
+        rtype = str(res.get("type") or "").lower()
+        if rtype == _ACA_ENV_TYPE:
+            idle = _aca_env_idle(res, env_children.get(_key(rid), []), activity, min_sample_days)
+        elif rtype == _ACA_APP_TYPE:
+            idle = _aca_app_idle(res, activity, min_sample_days)
+        else:
+            continue
+        if idle is None:
+            continue
+        action, evidence, from_activity = idle
+        monthly = _lookup(cost, rid)
+        f = finding_for(rid, rtype)
+        f.kind = "idle"
+        f.current_sku = res.get("sku")
+        f.recommended_action = action
+        f.current_monthly_usd = monthly
+        f.est_monthly_savings_usd = monthly  # idle => the whole line item is recoverable
+        f.validated = True
+        f.evidence.append(evidence)
+        f.add_source("resource-graph")
+        if from_activity:
+            f.add_source("azure-monitor")
 
     # ---- 2. Utilization-driven idle / oversized -----------------------------
     for res in resources:
@@ -258,6 +312,65 @@ def _inventory_idle(res: dict, rtype: str):
         )
 
     return None
+
+
+def _aca_activity_is_idle(act, min_sample_days):
+    """True when the Requests signal has enough coverage AND shows zero traffic,
+    False when it shows traffic, None when coverage is insufficient to judge."""
+    if not act or _as_int(act.get("sample_days")) < min_sample_days:
+        return None
+    requests_total = _as_float(act.get("requests_total"))
+    if requests_total is None:
+        return None
+    return requests_total <= 0
+
+
+def _aca_app_idle(res, activity, min_sample_days):
+    """Return (action, evidence, from_activity) for an idle Container App, else None.
+
+    Needs the Requests signal (from Azure Monitor) to claim "no traffic" — without it the
+    app is left unvalidated rather than guessed. An always-on app (minReplicas>=1) with no
+    traffic bills continuously and is the strongest signal.
+    """
+    is_idle = _aca_activity_is_idle(_lookup(activity, res.get("resourceId")), min_sample_days)
+    if not is_idle:  # None (no coverage) or False (has traffic) => don't flag
+        return None
+    days = _as_int(_lookup(activity, res.get("resourceId")).get("sample_days"))
+    min_replicas = _as_int(res.get("minReplicas"))
+    if min_replicas >= 1:
+        return (
+            "Delete the Container App or set minReplicas=0 — it is always-on with no traffic.",
+            f"0 requests over {days}d and minReplicas={min_replicas} (always-on, billing while idle).",
+            True,
+        )
+    return (
+        "Delete the unused Container App (no traffic).",
+        f"0 requests over {days}d (scales to zero; low residual cost).",
+        True,
+    )
+
+
+def _aca_env_idle(res, children, activity, min_sample_days):
+    """Return (action, evidence, from_activity) for an idle Container Apps environment.
+
+    Empty environments (0 apps) are an inventory fact. An environment that still hosts apps
+    is flagged only when EVERY app has request coverage and zero traffic — if any app has
+    traffic, or any lacks coverage, the environment is left alone (conservative).
+    """
+    if not children:
+        return (
+            "Delete the empty Container Apps environment.",
+            "Environment hosts 0 container apps.",
+            False,
+        )
+    for app in children:
+        if _aca_activity_is_idle(_lookup(activity, app.get("resourceId")), min_sample_days) is not True:
+            return None  # some app has traffic, or we can't confirm it doesn't
+    return (
+        "Delete the Container Apps environment — none of its apps received traffic.",
+        f"All {len(children)} app(s) had 0 requests over the window (environment unused).",
+        True,
+    )
 
 
 def _utilization_verdict(metrics, cpu_idle_pct, cpu_underutil_pct, min_sample_days):

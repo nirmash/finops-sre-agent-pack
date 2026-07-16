@@ -1,0 +1,75 @@
+# Proactive weekly FinOps Rightsizing Savings Live Report refresh.
+#
+# Like the Cost Overview report, this drives the built-in `live_report_authoring`
+# skill (not a finops-* skill directly) to author/update a Live Report in
+# Operations Hub > Live Reports. It first runs the finops-rightsizing-advisor
+# analysis, then bakes the ranked savings into a snapshot dashboard. It keeps ONE
+# report named "FinOps: Rightsizing Savings" and saves a new VERSION each week.
+#
+# Requires Live Reports enabled on the agent (first-party + Operations Hub).
+#
+# Applied by install.sh via `srectl scheduledtask apply --file`. The installer
+# renders the __PLACEHOLDER__ tokens from environment variables before applying.
+# Apply is upsert-by-name, so re-running is idempotent.
+apiVersion: azuresre.ai/v1
+kind: ScheduledTask
+metadata:
+  name: "FinOps: Rightsizing Savings (Live Report, Weekly)"
+  owner: __ALERT_EMAIL__
+  tags:
+    - finops
+    - finops-live-report
+    - finops-rightsizing-advisor
+spec:
+  name: "FinOps: Rightsizing Savings (Live Report, Weekly)"
+  description: >-
+    Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub) of
+    rightsizing / idle-resource savings: total potential savings, a top-opportunities
+    chart, and a ranked recommendations table.
+  agent: __AGENT_NAME__
+  cron: __CRON__
+  modelTier: ReasoningHeavy
+  agentPrompt: |
+    Create or update a Live Report now using the `live_report_authoring` skill.
+    This is an explicit request to author and SAVE a Live Report — proceed without
+    asking any questions and do not defer it to chat.
+
+    Report: a FinOps rightsizing / savings snapshot for Azure subscription __SUB_ID__.
+
+    Idempotent weekly refresh — keep ONE report and version it:
+    1. Call ListReports. If a report named exactly "FinOps: Rightsizing Savings"
+       already exists, call GetReport to check it out and reuse its reportId; pass
+       that reportId to SaveReport (saving a new VERSION). If it does not exist, omit
+       reportId (create it).
+
+    Gather the data NOW by running the finops-rightsizing-advisor analysis (read-only):
+    2. Load finops-rightsizing-advisor (read its SKILL.md) and follow its steps to
+       produce ranked recommendations: Azure Advisor cost recs
+       (`az advisor recommendation list --category Cost`); Resource Graph inventory of
+       VMs/disks/App Service plans; per-VM "Percentage CPU" over 14 days; ~30 days of
+       Consumption UsageDetails (ActualCost) via `az rest --method get` (paginate
+       nextLink; costInUSD; resource id from properties.instanceName falling back to
+       properties.resourceId). Then write the skill's rightsize.py to the sandbox and
+       run `recommend_rightsizing(resources=..., utilization=..., costs=..., advisor=...)`
+       to get the ranked list with estimated monthly savings.
+    3. Do NOT use `az rest --method post` or the Cost Management Query API — POST is
+       blocked as a write.
+
+    This is a SNAPSHOT report, not a connector-backed live report:
+    4. BAKE the results directly into the HTML as static data (a JS constant / static
+       DOM). Do NOT use window.sreagent.callTool anywhere — the report must render
+       fully with no view-time tool calls. Call SaveReport with allowedTools set to an
+       EMPTY list (so it saves with no connector-approval prompt).
+       - name: "FinOps: Rightsizing Savings"
+       - description: one sentence noting it is a weekly-refreshed rightsizing /
+         idle-resource savings snapshot, part of the FinOps pack, as of today's date.
+    5. Content: a headline TOTAL estimated monthly savings; a Chart.js bar chart of the
+       top savings opportunities; and a ranked table (resource, type, kind
+       [idle/oversized/advisor], current SKU, recommended action, current monthly $,
+       est monthly savings $, validated). Mark validated=false / unvalidated rows as
+       "verify first". Single self-contained HTML file; follow the skill's CSP/nonce
+       rules and copy the exact SRI library tags from the reference files. Light mode.
+       Wrap every render block defensively with a small empty-state.
+
+    Recommend only. Read-only Azure. Do not use any write/POST Azure operations. When
+    done, confirm the saved report id and version number.

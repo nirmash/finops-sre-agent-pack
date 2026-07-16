@@ -24,6 +24,8 @@ AGENT_NAME="${AGENT_NAME:-Nir Mashkowski}"
 SUB_ID="${SUB_ID:-93cba93f-571e-44e9-ac0a-a2987b58848c}"
 DAILY_CRON="${DAILY_CRON:-${CRON:-0 14 * * *}}"  # daily 14:00 UTC (CRON kept for back-compat)
 WEEKLY_CRON="${WEEKLY_CRON:-0 15 * * 1}"         # Mondays 15:00 UTC
+REPORT_CRON="${REPORT_CRON:-0 14 * * *}"         # daily live-report refresh 14:00 UTC
+RIGHTSIZE_REPORT_CRON="${RIGHTSIZE_REPORT_CRON:-0 15 * * 1}"  # weekly rightsizing live-report refresh Mon 15:00 UTC
 ALERT_EMAIL="${ALERT_EMAIL:-nimashkowski@microsoft.com}"
 GITHUB_REPO="${GITHUB_REPO:-nirmash/azure-sre-agent-sandbox}"
 MI_OBJECT_ID="${MI_OBJECT_ID:-}"                 # agent managed identity objectId; set to auto-grant RBAC
@@ -33,6 +35,8 @@ SKILL_NAMES=("finops-cost-anomaly-detection" "finops-rightsizing-advisor")
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DAILY_TEMPLATE="${PLUGIN_DIR}/scheduled-tasks/cost-anomaly-daily.yaml"
 WEEKLY_TEMPLATE="${PLUGIN_DIR}/scheduled-tasks/rightsizing-weekly.yaml"
+REPORT_TEMPLATE="${PLUGIN_DIR}/scheduled-tasks/cost-overview-report-daily.yaml"
+RIGHTSIZE_REPORT_TEMPLATE="${PLUGIN_DIR}/scheduled-tasks/rightsizing-savings-report-weekly.yaml"
 
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 ok()   { printf '\033[1;32m  ✓ %s\033[0m\n' "$*"; }
@@ -98,6 +102,8 @@ apply_task() {
 }
 apply_task "$DAILY_TEMPLATE"  "$DAILY_CRON"  "FinOps: Cost Anomaly Detection (Daily)"
 apply_task "$WEEKLY_TEMPLATE" "$WEEKLY_CRON" "FinOps: Rightsizing Review (Weekly)"
+apply_task "$REPORT_TEMPLATE" "$REPORT_CRON" "FinOps: Cost Overview (Live Report, Daily)"
+apply_task "$RIGHTSIZE_REPORT_TEMPLATE" "$RIGHTSIZE_REPORT_CRON" "FinOps: Rightsizing Savings (Live Report, Weekly)"
 
 # ---- 4. Verify --------------------------------------------------------------
 say "Verifying"
@@ -106,8 +112,12 @@ for skill in "${SKILL_NAMES[@]}"; do
 done
 srectl scheduledtask list | grep -i "Cost Anomaly Detection" >/dev/null && ok "daily anomaly task registered"   || warn "daily task not visible"
 srectl scheduledtask list | grep -i "Rightsizing Review"     >/dev/null && ok "weekly rightsizing task registered" || warn "weekly task not visible"
+srectl scheduledtask list | grep -i "Cost Overview"          >/dev/null && ok "daily live-report task registered"  || warn "live-report task not visible"
+srectl scheduledtask list | grep -i "Rightsizing Savings"    >/dev/null && ok "weekly rightsizing live-report task registered" || warn "rightsizing live-report task not visible"
 
 say "Done — FinOps pack installed."
 printf '  • On-demand:  ask the agent \"run the finops-cost-anomaly-detection skill for subscription %s\"\n' "$SUB_ID"
 printf '                or \"run the finops-rightsizing-advisor skill for subscription %s\"\n' "$SUB_ID"
 printf '  • Proactive:  anomaly scan daily on \"%s\"; rightsizing review weekly on \"%s\" -> %s\n' "$DAILY_CRON" "$WEEKLY_CRON" "$ALERT_EMAIL"
+printf '  • Live Reports: \"FinOps: Cost Overview\" daily on \"%s\"; \"FinOps: Rightsizing Savings\" weekly on \"%s\" (Operations Hub > Live Reports; requires Live Reports enabled).\n' "$REPORT_CRON" "$RIGHTSIZE_REPORT_CRON"
+printf '  • Live Report: \"FinOps: Cost Overview\" refreshed daily on \"%s\" (Operations Hub > Live Reports; requires Live Reports enabled).\n' "$REPORT_CRON"

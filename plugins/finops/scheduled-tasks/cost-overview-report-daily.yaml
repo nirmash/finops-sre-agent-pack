@@ -1,0 +1,67 @@
+# Proactive daily FinOps Live Report refresh.
+#
+# Unlike the other two tasks, this one does not run a finops-* skill — it drives
+# the built-in `live_report_authoring` skill to author/update a Live Report that
+# appears in Operations Hub > Live Reports. It keeps ONE report named
+# "FinOps: Cost Overview" and saves a new VERSION each day (a baked-in snapshot,
+# so it needs no view-time connectors and saves with no approval prompt).
+#
+# Requires Live Reports enabled on the agent (first-party + Operations Hub).
+#
+# Applied by install.sh via `srectl scheduledtask apply --file`. The installer
+# renders the __PLACEHOLDER__ tokens from environment variables before applying.
+# Apply is upsert-by-name, so re-running is idempotent.
+apiVersion: azuresre.ai/v1
+kind: ScheduledTask
+metadata:
+  name: "FinOps: Cost Overview (Live Report, Daily)"
+  owner: __ALERT_EMAIL__
+  tags:
+    - finops
+    - finops-live-report
+spec:
+  name: "FinOps: Cost Overview (Live Report, Daily)"
+  description: >-
+    Part of the FinOps pack — a daily-refreshed Live Report (Operations Hub)
+    snapshot of Azure cost: total, daily trend, top services, and top resource
+    groups.
+  agent: __AGENT_NAME__
+  cron: __CRON__
+  modelTier: ReasoningHeavy
+  agentPrompt: |
+    Create or update a Live Report now using the `live_report_authoring` skill.
+    This is an explicit request to author and SAVE a Live Report — proceed without
+    asking any questions and do not defer it to chat.
+
+    Report: a FinOps cost overview snapshot for Azure subscription __SUB_ID__.
+
+    Idempotent daily refresh — keep ONE report and version it:
+    1. Call ListReports. If a report named exactly "FinOps: Cost Overview" already
+       exists, call GetReport to check it out and reuse its reportId; pass that
+       reportId to SaveReport (saving a new VERSION). If it does not exist, omit
+       reportId (create it).
+
+    This is a SNAPSHOT report, not a connector-backed live report:
+    2. Pull the data NOW, at authoring time, using read-only Azure cost commands.
+       Use `az rest --method get` against Consumption UsageDetails (ActualCost) for
+       the last 30 days and paginate nextLink. Do NOT use `az rest --method post` or
+       the Cost Management Query API — POST is blocked as a write. Read costInUSD;
+       take the resource id from properties.instanceName, falling back to
+       properties.resourceId (resourceId is null in modern billing).
+    3. Aggregate with in-sandbox Python into: (a) total spend for the window and a
+       daily total time-series, (b) top 8 services by cost (meterCategory), (c) top
+       8 resource groups by cost.
+    4. BAKE the numbers directly into the HTML as static data (a JS constant /
+       static DOM). Do NOT use window.sreagent.callTool anywhere — the report must
+       render fully with no view-time tool calls. Call SaveReport with allowedTools
+       set to an EMPTY list (so it saves with no connector-approval prompt).
+       - name: "FinOps: Cost Overview"
+       - description: one sentence noting it is a daily-refreshed snapshot of Azure
+         cost, part of the FinOps pack, as of today's date.
+    5. Author a single self-contained HTML file. Follow the skill's CSP/nonce rules
+       and copy the exact SRI library tags from the reference files (use Chart.js for
+       the daily line chart). Light mode. Wrap every render block defensively with a
+       small empty-state.
+
+    Read-only Azure only. Do not use any write/POST Azure operations. When done,
+    confirm the saved report id and version number.

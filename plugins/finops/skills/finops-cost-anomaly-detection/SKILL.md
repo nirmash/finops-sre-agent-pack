@@ -33,7 +33,10 @@ az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/
 - **Paginate:** follow `nextLink` until absent; concatenate all `value[]` items.
 - Flatten each row to the shape `detect.py` expects:
   `{date, cost, meterCategory, resourceGroup, resourceId, tags}` — `date` from
-  `properties.date`, `cost` from `properties.costInUSD`.
+  `properties.date`, `cost` from `properties.costInUSD`. For `resourceId`, use
+  **`properties.instanceName`** (in modern billing the full ARM resource id lives there and
+  `properties.resourceId` is null); fall back to `properties.resourceId` when `instanceName`
+  is absent.
 
 ### Step 2 — Detect (bundled detect.py, in-sandbox)
 

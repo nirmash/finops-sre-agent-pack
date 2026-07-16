@@ -197,7 +197,7 @@ read -r -d '' ANOMALY_PROMPT <<EOF || true
 Run the \`finops-cost-anomaly-detection\` skill for subscription ${SUB_ID}. Read-only. Follow the skill's procedure exactly:
 
 1. Load the skill — read its SKILL.md so you use the bundled detector and steps.
-2. Step 1 (pull): GET Consumption UsageDetails (ActualCost) for the last 35 days via \`az rest --method get\`, paginate nextLink, and flatten each row to {date, cost, meterCategory, resourceGroup, resourceId, tags}.
+2. Step 1 (pull): GET Consumption UsageDetails (ActualCost) for the last 35 days via \`az rest --method get\`, paginate nextLink, and flatten each row to {date, cost, meterCategory, resourceGroup, resourceId, tags} (resourceId from properties.instanceName, falling back to properties.resourceId — resourceId is null in modern billing).
 3. Step 2 (detect): write the skill's embedded detect.py to the sandbox and run detect_anomalies(line_items) with defaults (baseline_days=28, k=3.0, min_delta_usd=5.0, wow_ratio=1.5). Keep assume_last_partial=True so the partial newest billing day is excluded.
 4. Step 3 (correlate): for EACH anomaly, search az subscription/resource-group deployments, activity-log write ops, and GitHub commits + merged PRs (repo ${GITHUB_REPO}) within +/-1 day of the spike date, and attach the most likely cause.
 5. Step 4 (report):

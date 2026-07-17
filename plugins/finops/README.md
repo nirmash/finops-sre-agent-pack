@@ -18,6 +18,19 @@ Python (`ExecutePythonCode`).
 | `finops-for-ai` | Attribute AOAI/Cognitive Services spend per deployment/model from token metrics | 🔜 planned |
 | `cost-vs-reliability` | Join spend with incident/alert history to weigh reliability spend vs risk | 🔜 planned |
 
+## Roadmap & backlog
+
+Planned **skills** are listed in the table above (🔜). Cross-cutting work items not represented as a
+skill:
+
+| Item | What | Status |
+|------|------|--------|
+| **Usage examples per skill** | For each shipped skill (`finops-cost-anomaly-detection`, `finops-rightsizing-advisor`, `finops-cost-allocation`): sample input data, an example invocation, and expected output/report — under each skill folder (an `examples/` dir or an Examples section in `SKILL.md`). Do after the implementation work is complete. | 🔜 planned |
+| **Cost-pull recipe simplification** | Lead the anti-`413` recipe with `$top` + `--query` field projection (the levers that actually shrink the server response); demote date-windowing to a fallback. Live runs showed the `usageStart` slice filter isn't reliably applied, so it's belt-and-suspenders, not primary. | 🔜 planned |
+| **Make repo public** | Flip the repo to public and drop the install PAT once the pack is ready to share. | 🔜 planned |
+
+Engineering wave order: **F4 `budget-governance`** (read budgets/forecast via `GET Microsoft.Consumption/budgets`) → **`budget-editor`** (first write skill) → `cost-optimization-report` → `finops-for-ai` → `cost-vs-reliability`.
+
 ## Prerequisites
 
 These are **RBAC grants on the customer's subscription**, not product changes. Grant them to the

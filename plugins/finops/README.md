@@ -11,8 +11,8 @@ Python (`ExecutePythonCode`).
 |-------|--------------|--------|
 | [`finops-cost-anomaly-detection`](skills/finops-cost-anomaly-detection/SKILL.md) | Detect cost spikes and correlate each to the deployment / change / PR that caused it | ✅ Wave 1 — validated live |
 | [`finops-rightsizing-advisor`](skills/finops-rightsizing-advisor/SKILL.md) | Advisor cost recs + live utilization + inventory → ranked rightsizing / idle-cleanup recommendations (incl. idle Azure Container Apps environments, always-on apps, and warm session pools with no traffic, plus a cost-led sweep so no high-spend resource is missed), validated against real utilization and cost | ✅ Wave 1 — validated live |
+| [`finops-cost-allocation`](skills/finops-cost-allocation/SKILL.md) | Join cost line items with tags → showback by team/env/service/costCenter/app/owner; explicit unallocated bucket + ranked untagged spend + tag-hygiene flags | ✅ Wave 2 — offline-tested |
 | `cost-optimization-report` | Recurring cost report bundling anomalies, rightsizing, budget status, policy violations | 🔜 planned |
-| `cost-allocation` (showback) | Join cost line items with tags → spend by service/team/env; flag untagged spend | 🔜 planned |
 | `budget-governance` | Burn-rate vs thresholds, client-side month-end forecast, process gates | 🔜 planned |
 | `finops-for-ai` | Attribute AOAI/Cognitive Services spend per deployment/model from token metrics | 🔜 planned |
 | `cost-vs-reliability` | Join spend with incident/alert history to weigh reliability spend vs risk | 🔜 planned |
@@ -212,5 +212,5 @@ Both skills' logic is pure Python and offline-testable (`detect.py`, `rightsize.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/          # 38 tests: 8 for finops-cost-anomaly-detection, 30 for finops-rightsizing-advisor
+pytest tests/          # 47 tests: 8 anomaly, 30 rightsizing, 9 cost-allocation
 ```

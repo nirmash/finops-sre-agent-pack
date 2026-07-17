@@ -32,5 +32,5 @@ written.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/          # 38 tests: 8 for finops-cost-anomaly-detection, 30 for finops-rightsizing-advisor
+pytest tests/          # 47 tests: 8 anomaly, 30 rightsizing, 9 cost-allocation
 ```

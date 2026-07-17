@@ -14,6 +14,7 @@ Python (`ExecutePythonCode`).
 | [`finops-cost-allocation`](skills/finops-cost-allocation/SKILL.md) | Join cost line items with tags → showback by team/env/service/costCenter/app/owner; explicit unallocated bucket + ranked untagged spend + tag-hygiene flags | ✅ Wave 2 — offline-tested |
 | `cost-optimization-report` | Recurring cost report bundling anomalies, rightsizing, budget status, policy violations | 🔜 planned |
 | `budget-governance` | Burn-rate vs thresholds, client-side month-end forecast, process gates | 🔜 planned |
+| `budget-editor` | Propose / set Azure Cost Management budgets (`az consumption budget`). **First write skill** — uses `RunAzCliWriteCommands` behind the agent's approval gate; needs a write RBAC role. Pairs with `budget-governance` (read). | 🔜 planned |
 | `finops-for-ai` | Attribute AOAI/Cognitive Services spend per deployment/model from token metrics | 🔜 planned |
 | `cost-vs-reliability` | Join spend with incident/alert history to weigh reliability spend vs risk | 🔜 planned |
 
@@ -25,6 +26,7 @@ SRE Agent's managed identity.
 | Grant | Needed for | Command |
 |-------|-----------|---------|
 | **Cost Management Reader** | All cost skills (`costInUSD` is null without it) | `az role assignment create --assignee <AGENT_MI_OBJECT_ID> --role "Cost Management Reader" --scope /subscriptions/<SUB_ID>` |
+| **Cost Management Contributor** *(write)* | Only the planned `budget-editor` skill — creating/updating budgets is a write (`az consumption budget`) and runs through the agent's approval gate. Not needed by any read-only skill. | `az role assignment create --assignee <AGENT_MI_OBJECT_ID> --role "Cost Management Contributor" --scope /subscriptions/<SUB_ID>` |
 | **Log Analytics Reader** + `api.loganalytics.io` scope | Pod/namespace-level AKS rightsizing (Container Insights KQL) | Grant the role on the workspace and allowlist the scope for the MI |
 
 ## Why read-only `az` is sufficient for cost

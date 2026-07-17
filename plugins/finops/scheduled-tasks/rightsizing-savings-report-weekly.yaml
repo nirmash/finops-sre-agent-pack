@@ -53,10 +53,14 @@ spec:
        "SessionApiRequestCount" (Total, P1D) over 14 days into activity={resourceId:{requests_total,sample_days}}
        (flags unused ACA environments, always-on apps with no traffic, and warm session pools with no
        sessions); ~30 days of Consumption UsageDetails (ActualCost) via `az rest --method get`
-       in 5-day date-windowed slices (`&$filter=properties/usageStart ge 'A' and properties/usageStart
-       lt 'B'`, `&$top=1000`, paginate nextLink within each slice, concatenate — avoids the
-       deep-pagination 413 that persists even at $top=20 over a long range; halve the slice and drop
-       $top if one still 413s; costInUSD; resource id from properties.instanceName falling back to
+       in 3-day date-windowed slices (`&$filter=properties/usageStart ge 'A' and properties/usageStart
+       lt 'B'`, `&$top=1000`, paginate nextLink within each slice, concatenate; project to needed
+       fields with `--query "{value: value[].{date: properties.date, cost: properties.costInUSD,
+       resourceGroup: properties.resourceGroup, resourceId: properties.instanceName, tags: tags},
+       nextLink: nextLink}"` — the 413 is a server-side response-size limit that short 3-day slices +
+       bounded $top keep under the cap, a 5-day slice trips it, and --query is client-side so does NOT
+       prevent it; halve the slice to ~1 day and drop $top if one still 413s; costInUSD; resource id
+       from properties.instanceName falling back to
        properties.resourceId; if a slice cannot complete, keep partial rows but label totals
        "partial — cost pull truncated"). Then write the skill's rightsize.py to the sandbox and
        run `recommend_rightsizing(resources=..., utilization=..., activity=..., costs=..., advisor=...)`

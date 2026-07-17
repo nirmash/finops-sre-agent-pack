@@ -124,14 +124,17 @@ field is null) — key on `instanceName` and fall back to `resourceId`. Ids are 
 case-insensitively. This is what lets the skill **rank by dollars** and size idle waste. The Cost
 Management Query/POST API is not needed.
 
-**Pull in 5-day date-windowed slices** (`\$filter=properties/usageStart ge 'A' and properties/usageStart
-lt 'B'`, `\$top=1000`, paginate `nextLink` within each slice, concatenate). This is the reliable way to
-avoid a `413 Request Too Large`: the 413 comes from **deep `nextLink` pagination** over a long range
-(it persists even at `\$top=20`), and short slices keep each slice's pagination shallow. If a slice
-still 413s, halve it (~2–3 days) and drop `\$top` (1000 → 100 → 20). If a slice still cannot complete,
-keep partial rows but **label the savings totals "partial — cost pull truncated"** so the biggest line
-items (a warm session pool's full monthly cost only shows once its whole window is summed) aren't
-undercounted silently.
+**Pull in 3-day date-windowed slices with `\$top=1000`, projecting to just the fields you need with
+`--query`** (`--query "{value: value[].{date: properties.date, cost: properties.costInUSD, resourceGroup:
+properties.resourceGroup, resourceId: properties.instanceName, tags: tags}, nextLink: nextLink}"`,
+`\$filter=properties/usageStart ge 'A' and properties/usageStart lt 'B'`, paginate `nextLink` within each
+slice, concatenate). The `413 Request Too Large` is a **server-side response-size limit** — short date
+slices + a bounded `\$top` are what keep each page under the cap (a 5-day slice trips the 413; 3-day
+comes back manageable). `--query` runs client-side so it does not prevent the 413 — it just keeps the
+retained dataset small for the sandbox. If a slice still 413s, halve it (~1 day) and drop `\$top`
+(1000 → 100 → 20). If a slice still cannot complete, keep partial rows but **label the savings totals
+"partial — cost pull truncated"** so the biggest line items (a warm session pool's full monthly cost
+only shows once its whole window is summed) aren't undercounted silently.
 
 ### Step 5 — Rank (bundled rightsize.py, in-sandbox)
 

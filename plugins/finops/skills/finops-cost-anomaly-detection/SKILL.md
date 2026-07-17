@@ -26,30 +26,44 @@ Use the **modern Consumption UsageDetails GET** (the Cost Management Query/POST 
 blocked by the read-only gate and is **not needed** — detection happens client-side). Request a
 trailing window large enough for a baseline plus the current period (default: 35 days).
 
-**Pull in small date-windowed slices — this is the reliable way to avoid a `413 Request Too Large`.**
-The 413 is not primarily a page-size problem: the API rejects `nextLink` continuations once the
-skip-token offset gets deep, so a single 30–35 day query fails on a later page **even at `\$top=20`**.
-Splitting the range into short slices keeps each slice's pagination *shallow*, so it never reaches
-that limit. Walk the window in **5-day slices**, each bounded by `usageStart`:
+**Pull in short date-windowed slices with a bounded page size, and project to only the fields you
+need with `--query`.** Two things matter here, and they solve two different problems:
+
+1. **Avoiding the server `413 Request Too Large` — use short date slices + bounded `\$top`.** The 413
+   is a **server-side response-size limit**: when the page the Consumption API would return is too
+   large it refuses with 413. The levers that actually shrink what the *server* returns are (a) short
+   date windows and (b) a bounded `\$top`. Walk the trailing window in **3-day slices** bounded by
+   `usageStart`, with `\$top=1000`. Empirically 3-day slices come back around a few hundred KB while a
+   5-day slice trips the 413. `--query` does **not** help here — `az rest` downloads the full response
+   before applying `--query` client-side, so it cannot change the server's decision.
+2. **Keeping the data you retain small — use `--query` field projection.** A full UsageDetails row is
+   large (meter details, billing ids, additionalInfo, …). Project each row down to just the fields the
+   detector needs so the JSON you save and hand to the sandbox stays small and concatenation is cheap.
 
 ```bash
-# for each 5-day [SLICE_START, SLICE_END) slice across the window:
-az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&\$top=1000&\$filter=properties/usageStart ge '<SLICE_START>' and properties/usageStart lt '<SLICE_END>'"
+# for each 3-day [SLICE_START, SLICE_END) slice across the window:
+az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&\$top=1000&\$filter=properties/usageStart ge '<SLICE_START>' and properties/usageStart lt '<SLICE_END>'" \
+  --query "{value: value[].{date: properties.date, cost: properties.costInUSD, meterCategory: properties.meterCategory, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName, tags: tags}, nextLink: nextLink}"
 ```
 
-- **Slice the date range (primary defense):** 5-day slices. If a slice still 413s, **halve it**
-  (to ~2–3 days) and, if needed, drop `\$top` (1000 → 100 → 20) for that slice. Shallow pagination
-  per slice is what keeps you under the limit.
-- **Paginate within each slice:** follow `nextLink` until absent; concatenate all `value[]` items
-  across every slice. `nextLink` already carries the skip token — GET it as-is (don't re-add params).
+- **3-day slices + `\$top=1000` (primary anti-413):** short windows keep each page under the server
+  size cap and keep pagination shallow so the skip-token offset never grows deep enough to 413 on a
+  later `nextLink`.
+- **Fallbacks if a slice still 413s:** halve the slice (to ~1 day) and/or drop `\$top` (1000 → 100 →
+  20) for that slice only.
+- **`--query` projection (retained-payload hygiene):** keeps only `{date, cost, meterCategory,
+  resourceGroup, resourceId, tags}` plus `nextLink`, so the concatenated dataset stays small.
+- **Paginate within each slice:** follow `nextLink` until absent; concatenate all rows across every
+  slice. `nextLink` already carries the skip token — GET it as-is (don't re-add params). Note the
+  `nextLink` in the raw body is HTML-escaped (`&amp;`) — decode `&amp;`→`&` before following it.
 - **De-dup** by `(resourceId, date, meterId)` when concatenating slices (slice boundaries use a
   half-open `[ge, lt)` filter, so overlaps shouldn't occur, but de-dup defensively).
 - **Never proceed on silently-partial cost.** If some slice cannot complete even after halving,
   keep the rows you have **but explicitly label every downstream total as "partial — cost pull
   truncated, spend understated"** so the numbers aren't trusted as complete.
-- Flatten each row to the shape `detect.py` expects:
+- The projected rows already match the shape `detect.py` expects:
   `{date, cost, meterCategory, resourceGroup, resourceId, tags}` — `date` from
-  `properties.date`, `cost` from `properties.costInUSD`. For `resourceId`, use
+  `properties.date`, `cost` from `properties.costInUSD`. For `resourceId` use
   **`properties.instanceName`** (in modern billing the full ARM resource id lives there and
   `properties.resourceId` is null); fall back to `properties.resourceId` when `instanceName`
   is absent.

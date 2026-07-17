@@ -10,7 +10,7 @@ Python (`ExecutePythonCode`).
 | Skill | What it does | Status |
 |-------|--------------|--------|
 | [`finops-cost-anomaly-detection`](skills/finops-cost-anomaly-detection/SKILL.md) | Detect cost spikes and correlate each to the deployment / change / PR that caused it | ✅ Wave 1 — validated live |
-| [`finops-rightsizing-advisor`](skills/finops-rightsizing-advisor/SKILL.md) | Advisor cost recs + live utilization + inventory → ranked rightsizing / idle-cleanup recommendations (incl. idle Azure Container Apps environments & always-on apps with no traffic), validated against real utilization and cost | ✅ Wave 1 — validated live |
+| [`finops-rightsizing-advisor`](skills/finops-rightsizing-advisor/SKILL.md) | Advisor cost recs + live utilization + inventory → ranked rightsizing / idle-cleanup recommendations (incl. idle Azure Container Apps environments, always-on apps, and warm session pools with no traffic, plus a cost-led sweep so no high-spend resource is missed), validated against real utilization and cost | ✅ Wave 1 — validated live |
 | `cost-optimization-report` | Recurring cost report bundling anomalies, rightsizing, budget status, policy violations | 🔜 planned |
 | `cost-allocation` (showback) | Join cost line items with tags → spend by service/team/env; flag untagged spend | 🔜 planned |
 | `budget-governance` | Burn-rate vs thresholds, client-side month-end forecast, process gates | 🔜 planned |
@@ -180,7 +180,7 @@ All 5 validation parts passed. The **daily proactive scheduled task** is also re
 on the live agent (`FinOps: Cost Anomaly Detection (Daily)`, cron `0 14 * * *`), and the whole pack
 has been installed end-to-end via [`install-api.sh`](install-api.sh) against a live agent.
 
-`finops-rightsizing-advisor` was validated to the **same level** — 22 offline unit tests plus a live
+`finops-rightsizing-advisor` was validated to the **same level** — 30 offline unit tests plus a live
 end-to-end run on the same subscription (`93cba93f…`):
 
 - Pulled **8 real Azure Advisor cost recs** (unattached disk, 3 empty App Service plans, 4 AKS).
@@ -191,8 +191,13 @@ end-to-end run on the same subscription (`93cba93f…`):
 - Backtest: injected a synthetic idle VM (p95 CPU 1.5%) and an oversized VM (p95 CPU 11%) → classified
   `idle` (full-cost savings) and `oversized` (50% one-tier estimate), ranked idle first.
 - **Azure Container Apps idle detection**: flags unused ACA environments (empty, or every app had
-  zero `Requests` traffic over the window) and always-on container apps (`minReplicas>=1`) with no
-  hits — covered by unit tests; validated against real traffic before surfacing, never guessed.
+  zero `Requests` traffic over the window), always-on container apps (`minReplicas>=1`) with no
+  hits, and **warm dynamic session pools** (`readySessionInstances>=1`) with zero `SessionApiRequestCount`
+  — a class invisible to `az resource list` that was the subscription's #1/#2 spend ($331/mo each),
+  validated live against real metrics.
+- **Cost-led coverage sweep**: any resource costing ≥ $20/mo whose type has no idle rule (and that no
+  other signal flagged) is surfaced as a `review` finding, so no expensive line item is ever silently
+  dropped just because a heuristic doesn't exist for its type yet.
 
 All 6 validation parts passed. The **weekly proactive scheduled task**
 (`FinOps: Rightsizing Review (Weekly)`, cron `0 15 * * 1`) is part of the same package install.
@@ -207,5 +212,5 @@ Both skills' logic is pure Python and offline-testable (`detect.py`, `rightsize.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/          # 23 tests: 8 for finops-cost-anomaly-detection, 15 for finops-rightsizing-advisor
+pytest tests/          # 38 tests: 8 for finops-cost-anomaly-detection, 30 for finops-rightsizing-advisor
 ```

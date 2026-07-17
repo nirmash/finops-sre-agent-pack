@@ -240,3 +240,80 @@ def test_aca_app_insufficient_activity_days_ignored():
             "environmentId": ACA_ENV, "minReplicas": 2}]
     activity = {ACA_APP: {"requests_total": 0, "sample_days": 3}}
     assert recommend(resources=res, activity=activity, costs={ACA_APP: 45.0}) == []
+
+
+# --- Session pools -----------------------------------------------------------
+
+POOL = "/subscriptions/s/resourceGroups/extract_rg/providers/Microsoft.App/sessionPools/extractpooltwo"
+
+
+def test_session_pool_warm_and_idle_flagged_full_savings():
+    res = [{"resourceId": POOL, "type": "microsoft.app/sessionpools", "readySessionInstances": 10}]
+    activity = {POOL: {"requests_total": 0, "sample_days": 14}}
+    out = recommend(resources=res, activity=activity, costs={POOL: 331.0})
+    ids = _by_id(out)
+    f = ids[POOL.lower()]
+    assert f["kind"] == "idle"
+    assert f["estMonthlySavingsUsd"] == 331.0
+    assert f["validated"] is True
+    assert "readySessionInstances=0" in f["recommendedAction"]
+    assert "azure-monitor" in f["sources"]
+
+
+def test_session_pool_warm_no_metric_surfaced_unvalidated():
+    res = [{"resourceId": POOL, "type": "microsoft.app/sessionpools", "readySessionInstances": 5}]
+    out = recommend(resources=res, costs={POOL: 331.0})  # no activity metric
+    ids = _by_id(out)
+    f = ids[POOL.lower()]
+    assert f["kind"] == "idle"
+    assert f["validated"] is None  # kept but unvalidated — verify usage
+    assert f["estMonthlySavingsUsd"] == 331.0
+
+
+def test_session_pool_zero_ready_not_flagged():
+    res = [{"resourceId": POOL, "type": "microsoft.app/sessionpools", "readySessionInstances": 0}]
+    activity = {POOL: {"requests_total": 0, "sample_days": 14}}
+    assert recommend(resources=res, activity=activity, costs={POOL: 331.0}) == []
+
+
+def test_session_pool_in_use_not_flagged():
+    res = [{"resourceId": POOL, "type": "microsoft.app/sessionpools", "readySessionInstances": 10}]
+    activity = {POOL: {"requests_total": 4200, "sample_days": 14}}
+    assert recommend(resources=res, activity=activity, costs={POOL: 331.0}) == []
+
+
+# --- Cost-led coverage sweep -------------------------------------------------
+
+REDIS = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Cache/Redis/cache1"
+
+
+def test_costly_uncovered_type_surfaced_as_review():
+    # Redis has no idle rule and no Advisor rec — but it is expensive, so it must not vanish.
+    out = recommend(costs={REDIS: 52.0})
+    ids = _by_id(out)
+    f = ids[REDIS.lower()]
+    assert f["kind"] == "review"
+    assert f["estMonthlySavingsUsd"] is None
+    assert f["validated"] is None
+    assert "cost-coverage" in f["sources"]
+
+
+def test_cheap_uncovered_type_not_reviewed():
+    assert recommend(costs={REDIS: 3.0}) == []  # below review threshold
+
+
+def test_covered_type_not_flagged_is_not_reviewed():
+    # A VM that no idle rule flagged was still evaluated — don't double-report it as "review".
+    res = [{"resourceId": VM, "type": "microsoft.compute/virtualmachines"}]
+    util = {VM: {"cpu_p95": 80.0, "sample_days": 30}}
+    assert recommend(resources=res, utilization=util, costs={VM: 200.0}) == []
+
+
+def test_review_does_not_duplicate_flagged_resource():
+    # A pool already flagged idle must not also appear as a cost-coverage review item.
+    res = [{"resourceId": POOL, "type": "microsoft.app/sessionpools", "readySessionInstances": 10}]
+    activity = {POOL: {"requests_total": 0, "sample_days": 14}}
+    out = recommend(resources=res, activity=activity, costs={POOL: 331.0})
+    assert len(out) == 1
+    assert out[0]["kind"] == "idle"
+

@@ -26,10 +26,13 @@ For cost *spikes* and their root cause, use `finops-cost-anomaly-detection` inst
 
 VM / disk / storage-tier / App Service plan / node-level rightsizing works today, plus **Azure
 Container Apps idle detection**: unused Container Apps environments (empty, or every app received
-zero traffic) and always-on container apps (`minReplicas>=1`) that keep billing with no requests.
-**Pod- and namespace-level AKS rightsizing needs a Log Analytics Reader grant + `api.loganalytics.io`
-scope on the agent identity** (Container Insights KQL is otherwise blocked) — out of scope here until
-that grant lands.
+zero traffic), always-on container apps (`minReplicas>=1`) that keep billing with no requests, and
+**warm dynamic session pools** (`readySessionInstances>=1`) with no session traffic — a class that is
+invisible to `az resource list` yet often tops the bill. A **cost-led coverage sweep** additionally
+flags any high-spend resource whose type has no idle rule as `review`, so nothing expensive is
+silently dropped. **Pod- and namespace-level AKS rightsizing needs a Log Analytics Reader grant +
+`api.loganalytics.io` scope on the agent identity** (Container Insights KQL is otherwise blocked) —
+out of scope here until that grant lands.
 
 ## Procedure
 
@@ -48,13 +51,13 @@ Flatten each recommendation to the shape `rightsize.py` expects:
 ### Step 2 — Pull inventory (Resource Graph) for idle patterns Advisor misses
 
 ```bash
-az graph query -q "Resources | where type in~ ('microsoft.compute/virtualmachines','microsoft.compute/disks','microsoft.web/serverfarms','microsoft.app/managedenvironments','microsoft.app/containerapps') | project id, type, sku=tostring(sku.name), properties, tags" --first 1000 -o json
+az graph query -q "Resources | where type in~ ('microsoft.compute/virtualmachines','microsoft.compute/disks','microsoft.web/serverfarms','microsoft.app/managedenvironments','microsoft.app/containerapps','microsoft.app/sessionpools') | project id, type, sku=tostring(sku.name), properties, tags" --first 1000 -o json
 ```
 
 On large subscriptions Resource Graph caps at 1000 rows per page — **paginate with `--skip-token`**
 (from the response) until it's empty so you don't miss resources.
 
-Flatten each row to `{resourceId, type, sku, powerState, diskState, numberOfSites, environmentId, minReplicas, tags}`:
+Flatten each row to `{resourceId, type, sku, powerState, diskState, numberOfSites, environmentId, minReplicas, readySessionInstances, tags}`:
 
 - **VM** `powerState` from `properties.extended.instanceView.powerState.code` (e.g.
   `PowerState/stopped` vs `PowerState/deallocated`). A **Stopped (not Deallocated)** VM still bills
@@ -67,6 +70,11 @@ Flatten each row to `{resourceId, type, sku, powerState, diskState, numberOfSite
   `properties.environmentId` (fall back to `properties.managedEnvironmentId`) and `minReplicas` from
   `properties.template.scale.minReplicas`. An app with `minReplicas>=1` is **always-on** (bills even
   with zero traffic).
+- **Dynamic session pool** (`microsoft.app/sessionpools`) `readySessionInstances` from
+  `properties.scaleConfiguration.readySessionInstances`. Pre-warmed sessions bill continuously, so a
+  pool with `readySessionInstances>=1` and no session traffic is pure waste. **Important:** these do
+  **not** appear in `az resource list -g <rg>` (only `az graph query` returns them), yet they are
+  frequently the single largest line items on the bill.
 
 ### Step 3 — Pull utilization (Azure Monitor) for VM candidates
 
@@ -82,7 +90,7 @@ Reduce each series to `{cpu_p95, cpu_avg, mem_p95, sample_days}` (percent, 0–1
 Skip resources with fewer than `min_sample_days` (default 7) of data — the skill treats them as
 unvalidated rather than guessing.
 
-### Step 3b — Pull request activity (Azure Monitor) for Container Apps
+### Step 3b — Pull request activity (Azure Monitor) for Container Apps and session pools
 
 For each container app, pull the trailing `Requests` metric so idle apps/environments are validated
 against **real traffic** (not guessed). Without this signal an app is left unvalidated, never flagged.
@@ -91,8 +99,21 @@ against **real traffic** (not guessed). Without this signal an app is left unval
 az monitor metrics list --resource <containerapp-resource-id> --metric "Requests" --interval P1D --start-time <UTC-14d> --aggregation Total -o json
 ```
 
+For each **session pool**, pull `SessionApiRequestCount` (Total) — and optionally
+`PoolExecutingPodCount` (Maximum, should be 0 when idle) — as its activity signal:
+
+```bash
+az monitor metrics list --resource <sessionpool-resource-id> --metric "SessionApiRequestCount" --interval P1D --start-time <UTC-14d> --aggregation Total -o json
+```
+
+Note: the session-pool metrics namespace is flaky — a call may return
+`Microsoft.App/sessionPools is not a supported platform metric namespace`. **Retry once or twice.**
+If it never succeeds, omit the pool from `activity`; the ranker still surfaces a warm pool as an
+*unvalidated* candidate ("verify usage before reducing") rather than dropping the largest line items.
+
 Sum the Total series into `{resourceId: {"requests_total": <sum>, "sample_days": <distinct days>}}`.
-`requests_total == 0` over enough days means no traffic. This map is passed as `activity=` below.
+`requests_total == 0` over enough days means no traffic (for a session pool, no sessions invoked).
+This map is passed as `activity=` below.
 
 ### Step 4 — Pull per-resource monthly cost (optional but recommended)
 
@@ -125,15 +146,22 @@ recs = recommend_rightsizing(
 `recommend_rightsizing` handles all classification and validation:
 
 - **kind** is `idle` (unattached disk, stopped-not-deallocated VM, empty App Service plan, empty or
-  no-traffic Container Apps environment, always-on container app with no requests, or p95 CPU below
-  `cpu_idle_pct`=5%), `oversized` (p95 CPU below `cpu_underutil_pct`=20%), or `advisor` (an Advisor
-  rec with no independent signal).
+  no-traffic Container Apps environment, always-on container app with no requests, warm dynamic
+  session pool with no session traffic, or p95 CPU below `cpu_idle_pct`=5%), `oversized` (p95 CPU
+  below `cpu_underutil_pct`=20%), `advisor` (an Advisor rec with no independent signal), or `review`
+  (see cost-led sweep below).
 - **validated** is `True` when utilization/inventory backs the call, `False` when utilization
   **contradicts** an Advisor rec (high CPU — flagged "verify before acting"), and `None`/unvalidated
-  when no metrics were available.
+  when no metrics were available (e.g. a warm session pool whose metrics namespace was unavailable —
+  surfaced as "verify usage before reducing" rather than dropped).
 - **estMonthlySavingsUsd**: full monthly cost for idle resources; Advisor's own number when present;
   otherwise a conservative 50% estimate for a one-tier downsize. Findings below
   `min_monthly_savings_usd` (default $5) are dropped; findings with unknown cost are kept and sort last.
+- **Cost-led coverage sweep** — after the rules run, any resource costing at least
+  `review_min_monthly_usd` (default $20/mo) whose **type has no idle rule** and that **no other signal
+  flagged** is surfaced as `kind="review"` (no savings claimed, `validated=None`). This guarantees no
+  expensive line item is silently dropped just because we lack a heuristic for its type. Covered types
+  that a rule evaluated but did not flag are **not** re-listed as review.
 - Signals for the same `resourceId` (Advisor + inventory + utilization) merge into one finding, joined
   case-insensitively.
 
@@ -142,6 +170,8 @@ recs = recommend_rightsizing(
 Produce a ranked table: resource (id + type), kind, current SKU, recommended action, current monthly
 $, estimated monthly savings $, validated, and the evidence/sources. Call out the **total estimated
 monthly savings** at the top. Clearly mark `validated=False` and unvalidated rows as "verify first".
+List `kind="review"` rows in a separate **"High spend, no idle rule yet — review"** section so the
+report's coverage is complete by spend even where no automated recommendation exists.
 Recommend only — do not perform any resize/deallocate/delete. If nothing clears the threshold, say so
 in one line.
 

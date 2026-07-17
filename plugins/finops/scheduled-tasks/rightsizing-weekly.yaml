@@ -29,14 +29,18 @@ spec:
     1. Load the skill — read its SKILL.md so you use the bundled rightsize.py and steps.
     2. Step 1 (Advisor): `az advisor recommendation list --category Cost` and flatten to
        {resourceId, problem, recommendation, targetSku, savingsUsd}.
-    3. Step 2 (inventory): `az graph query` for VMs, disks, App Service plans, and Azure
-       Container Apps (managedenvironments + containerapps); flatten to
-       {resourceId, type, sku, powerState, diskState, numberOfSites, environmentId, minReplicas, tags}.
+    3. Step 2 (inventory): `az graph query` for VMs, disks, App Service plans, Azure
+       Container Apps (managedenvironments + containerapps), and dynamic session pools
+       (microsoft.app/sessionpools — these do NOT show in `az resource list` and often top
+       the bill); flatten to {resourceId, type, sku, powerState, diskState, numberOfSites,
+       environmentId, minReplicas, readySessionInstances, tags}.
     4. Step 3 (utilization): for each VM candidate, `az monitor metrics list` "Percentage CPU"
        over the last 14 days; reduce to {cpu_p95, cpu_avg, mem_p95, sample_days}.
     5. Step 3b (activity): for each Container App, `az monitor metrics list` "Requests" (Total,
-       P1D) over 14 days; reduce to {resourceId: {requests_total, sample_days}} — flags unused
-       ACA environments and always-on apps with no traffic.
+       P1D) over 14 days; for each session pool, "SessionApiRequestCount" (Total, P1D) over 14
+       days (retry once or twice — the sessionPools metric namespace is flaky). Reduce to
+       {resourceId: {requests_total, sample_days}} — flags unused ACA environments, always-on
+       apps with no traffic, and warm session pools with no sessions.
     6. Step 4 (cost): GET Consumption UsageDetails (ActualCost) for ~30 days via
        `az rest --method get`, paginate nextLink, aggregate costInUSD by resourceId into
        {resourceId: monthly_usd}.

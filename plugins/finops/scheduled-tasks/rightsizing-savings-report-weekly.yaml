@@ -47,14 +47,17 @@ spec:
        produce ranked recommendations: Azure Advisor cost recs
        (`az advisor recommendation list --category Cost`); Resource Graph inventory of
        VMs/disks/App Service plans/Azure Container Apps (managedenvironments + containerapps;
-       project environmentId + minReplicas); per-VM "Percentage CPU" over 14 days; per-Container-App
-       "Requests" (Total, P1D) over 14 days into activity={resourceId:{requests_total,sample_days}}
-       (flags unused ACA environments and always-on apps with no traffic); ~30 days of
-       Consumption UsageDetails (ActualCost) via `az rest --method get` (paginate
+       project environmentId + minReplicas) and dynamic session pools (microsoft.app/sessionpools;
+       project readySessionInstances — these do not show in `az resource list` and often top the
+       bill); per-VM "Percentage CPU" over 14 days; per-Container-App "Requests" and per-session-pool
+       "SessionApiRequestCount" (Total, P1D) over 14 days into activity={resourceId:{requests_total,sample_days}}
+       (flags unused ACA environments, always-on apps with no traffic, and warm session pools with no
+       sessions); ~30 days of Consumption UsageDetails (ActualCost) via `az rest --method get` (paginate
        nextLink; costInUSD; resource id from properties.instanceName falling back to
        properties.resourceId). Then write the skill's rightsize.py to the sandbox and
        run `recommend_rightsizing(resources=..., utilization=..., activity=..., costs=..., advisor=...)`
-       to get the ranked list with estimated monthly savings.
+       to get the ranked list with estimated monthly savings (including any kind="review"
+       high-spend items with no idle rule yet).
     3. Do NOT use `az rest --method post` or the Cost Management Query API — POST is
        blocked as a write.
 

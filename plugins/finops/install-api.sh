@@ -296,7 +296,7 @@ printf '%s' "$resp" | grep -qi "Cost Overview"          && ok "daily live-report
 printf '%s' "$resp" | grep -qi "Rightsizing Savings"    && ok "weekly rightsizing live-report task present" || warn "rightsizing live-report task not visible"
 
 say "Done — FinOps pack installed via the agent API."
-printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
+printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-cost-allocation (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
 printf '  • Tasks  : "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s)\n' \
   "$TASK_NAME" "$CRON" "$RIGHTSIZE_TASK_NAME" "$RIGHTSIZE_CRON" \
   "$REPORT_TASK_NAME" "$REPORT_CRON" "$RIGHTSIZE_REPORT_TASK_NAME" "$RIGHTSIZE_REPORT_CRON"

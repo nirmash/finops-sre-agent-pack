@@ -15,7 +15,7 @@ Python (`ExecutePythonCode`).
 | [`finops-budget-governance`](skills/finops-budget-governance/SKILL.md) | Read native Azure budgets (`GET Microsoft.Consumption/budgets`) → evaluate each against amount + its own notification thresholds; Azure `forecastSpend` when present, else a client-side run-rate month-end forecast; ranks over / forecast-over / at-risk budgets and flags process gates. Handles the no-budgets-defined case. | ✅ Wave 2 — offline-tested |
 | [`finops-budget-editor`](skills/finops-budget-editor/SKILL.md) | **Advisory** budget right-sizing: read native budgets → recommend an amount (`max(current, forecast) × 1.15`, reusing the run-rate forecast) and render the exact `az rest --method put` command for a human to run. **Stays read-only** — it prints the write command but never executes it; applying it needs Cost Management Contributor. | ✅ Wave 2 — offline-tested |
 | [`finops-cost-optimization-report`](skills/finops-cost-optimization-report/SKILL.md) | **Executive rollup** — bundles the four read-only analyses (anomalies, rightsizing, cost allocation, budgets) into one headline, a single dollar-ranked priorities list (each item labelled by `impact_type` so savings, overruns, spikes, and governance dollars are never summed together), and per-section detail. Reuses existing signals only — no new data source. Read-only. | ✅ Wave 3 — offline-tested |
-| `finops-for-ai` | Attribute AOAI/Cognitive Services spend per deployment/model from token metrics | 🔜 planned |
+| `finops-for-ai` | Attribute Azure AI spend per resource / deployment / model. Scopes by **`ConsumedService == Microsoft.CognitiveServices`** (captures both classic Azure OpenAI `kind=OpenAI` **and** Azure AI Foundry `kind=AIServices` accounts — see the AI resource taxonomy note below) **plus `Microsoft.MachineLearningServices`** (Foundry hub/project compute, managed online endpoints, fine-tuning), then splits token/model meters from compute meters so each cost driver gets its own advice. | 🔜 planned |
 | `cost-vs-reliability` | Join spend with incident/alert history to weigh reliability spend vs risk | 🔜 planned |
 
 ## Roadmap & backlog
@@ -30,6 +30,31 @@ skill:
 | **Make repo public** | Flip the repo to public and drop the install PAT once the pack is ready to share. | 🔜 planned |
 
 Engineering wave order: `finops-for-ai` → `cost-vs-reliability`. (F4 `budget-governance` — read budgets/forecast — F5 `budget-editor` — advisory right-sizing that prints the write command but stays read-only — and F6 `cost-optimization-report` — the executive rollup Live Report — are now built.)
+
+### Design note — AI resource taxonomy for `finops-for-ai` (#2)
+
+Azure AI billing is easy to under-count, so `finops-for-ai` must **not** filter on `kind == OpenAI`
+or a meter category literally named "Azure OpenAI" — that misses Foundry-hosted model spend. The
+taxonomy:
+
+| Resource | ResourceType | `kind` | ConsumedService | Cost driver |
+|----------|--------------|--------|-----------------|-------------|
+| Classic **Azure OpenAI** | `Microsoft.CognitiveServices/accounts` | `OpenAI` | `Microsoft.CognitiveServices` | token meters (input/output) |
+| **Azure AI Foundry** (unified, formerly AI Services) | `Microsoft.CognitiveServices/accounts` | `AIServices` | `Microsoft.CognitiveServices` | token meters + other Cognitive Services meters |
+| **Foundry hub / project** compute | `Microsoft.MachineLearningServices/*` (workspaces, online endpoints) | — | `Microsoft.MachineLearningServices` | managed compute / endpoint VMs, fine-tuning/training compute |
+
+An OpenAI model (e.g. GPT-4o) deployed **inside** a Foundry `AIServices` account bills under
+`Microsoft.CognitiveServices` with the **same** model/token meter names as a classic AOAI resource,
+but the account's `kind` is `AIServices`, not `OpenAI`. So the skill should:
+
+1. Scope AI model spend by **`ConsumedService == Microsoft.CognitiveServices`** (covers both `kind`s),
+   then subdivide by `kind`, resource, deployment, and meter/model — never gate on `kind == OpenAI`.
+2. **Also include `Microsoft.MachineLearningServices`** so Foundry hub compute, managed online
+   endpoints, and fine-tuning/training compute aren't dropped.
+3. Classify **token/model meters vs compute meters separately** — they are different cost drivers and
+   warrant different optimization advice (model/tier/PTU choice vs idle-endpoint / right-size compute).
+
+Reuses the existing read-only cost pull — no new data source, consistent with the rest of the pack.
 
 ## Prerequisites
 

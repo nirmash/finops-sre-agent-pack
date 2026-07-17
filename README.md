@@ -32,5 +32,5 @@ written.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/          # 47 tests: 8 anomaly, 30 rightsizing, 9 cost-allocation
+pytest tests/          # 61 tests: 8 anomaly, 30 rightsizing, 9 cost-allocation, 14 budget-governance
 ```

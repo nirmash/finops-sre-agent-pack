@@ -28,10 +28,13 @@ spec:
 
     1. Load the skill — read its SKILL.md so you use the bundled detector and steps.
     2. Step 1 (pull): GET Consumption UsageDetails (ActualCost) for the last 35 days via
-       `az rest --method get`, paginate `nextLink`, and flatten each row to
+       `az rest --method get` with a bounded page size `&$top=100` (retry smaller — 50, then
+       20 — on a 413 Request Too Large; do NOT re-add $top when following nextLink), paginate
+       `nextLink`, and flatten each row to
        {date, cost, meterCategory, resourceGroup, resourceId, tags} (resourceId from
        properties.instanceName, falling back to properties.resourceId — resourceId is
-       null in modern billing).
+       null in modern billing). If pagination cannot complete, keep partial rows but label
+       downstream totals "partial — cost pull truncated".
     3. Step 2 (detect): write the skill's embedded detect.py to the sandbox and run
        `detect_anomalies(line_items)` with defaults (baseline_days=28, k=3.0,
        min_delta_usd=5.0, wow_ratio=1.5). Keep assume_last_partial=True so the partial

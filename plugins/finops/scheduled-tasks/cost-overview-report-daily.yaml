@@ -44,8 +44,11 @@ spec:
     This is a SNAPSHOT report, not a connector-backed live report:
     2. Pull the data NOW, at authoring time, using read-only Azure cost commands.
        Use `az rest --method get` against Consumption UsageDetails (ActualCost) for
-       the last 30 days and paginate nextLink. Do NOT use `az rest --method post` or
-       the Cost Management Query API — POST is blocked as a write. Read costInUSD;
+       the last 30 days with a bounded page size `&$top=100` (retry smaller — 50, then
+       20 — on a 413 Request Too Large; do NOT re-add $top when following nextLink) and
+       paginate nextLink. If pagination cannot complete, keep partial rows but label the
+       report totals "partial — cost pull truncated". Do NOT use `az rest --method post`
+       or the Cost Management Query API — POST is blocked as a write. Read costInUSD;
        take the resource id from properties.instanceName, falling back to
        properties.resourceId (resourceId is null in modern billing).
     3. Aggregate with in-sandbox Python into: (a) total spend for the window and a

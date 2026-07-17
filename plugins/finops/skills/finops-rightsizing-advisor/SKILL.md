@@ -124,6 +124,12 @@ field is null) — key on `instanceName` and fall back to `resourceId`. Ids are 
 case-insensitively. This is what lets the skill **rank by dollars** and size idle waste. The Cost
 Management Query/POST API is not needed.
 
+**Bound the page size with `\$top=100`** (retry smaller — 50, then 20 — on a `413 Request Too Large`);
+without it a later `nextLink` page trips a 413 and silently truncates cost, which **understates the
+biggest line items** (a warm session pool's true monthly cost only shows once its full usage window is
+summed). If pagination cannot complete, keep partial rows but **label the savings totals "partial —
+cost pull truncated"** so undercounted dollars aren't reported as final.
+
 ### Step 5 — Rank (bundled rightsize.py, in-sandbox)
 
 Read the module and run it — do **not** re-implement the logic in the prompt:

@@ -27,10 +27,18 @@ blocked by the read-only gate and is **not needed** — detection happens client
 trailing window large enough for a baseline plus the current period (default: 35 days).
 
 ```bash
-az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&\$filter=properties/usageStart ge '<START_YYYY-MM-DD>'"
+az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&\$top=100&\$filter=properties/usageStart ge '<START_YYYY-MM-DD>'"
 ```
 
-- **Paginate:** follow `nextLink` until absent; concatenate all `value[]` items.
+- **Bound the page size with `\$top` (required):** always pass `\$top=100`. Without a bounded page
+  size the API builds pages large enough to hit a **`413 Request Too Large`** on a later `nextLink`,
+  which silently truncates cost. If a page still returns 413, **retry that same URL with a smaller
+  `\$top` (50, then 20)** before giving up.
+- **Paginate:** follow `nextLink` until absent; concatenate all `value[]` items. `nextLink` already
+  carries the skip token — just GET it as-is (do not re-add `\$top`).
+- **Never proceed on silently-partial cost.** If pagination cannot complete (repeated 413/errors),
+  keep the rows you have **but explicitly label every downstream total as "partial — cost pull
+  truncated, spend understated"** so the numbers aren't trusted as complete.
 - Flatten each row to the shape `detect.py` expects:
   `{date, cost, meterCategory, resourceGroup, resourceId, tags}` — `date` from
   `properties.date`, `cost` from `properties.costInUSD`. For `resourceId`, use

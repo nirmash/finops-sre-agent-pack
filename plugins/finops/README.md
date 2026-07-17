@@ -52,8 +52,8 @@ required** — line items are aggregated / detected client-side in the sandbox. 
 
 ## Install everything (recommended)
 
-This plugin ships as a **package**: one command installs both skills, the four proactive scheduled
-tasks (two email reviews + two Live Reports), and (optionally) the RBAC grant. The tasks are all
+This plugin ships as a **package**: one command installs the skills, the five proactive scheduled
+tasks (two email reviews + three Live Reports), and (optionally) the RBAC grant. The tasks are all
 prefixed **`FinOps:`** so it's clear in the agent's Scheduled Tasks list that they belong to the
 FinOps pack and were installed alongside the skills.
 
@@ -83,7 +83,8 @@ Configuration (all optional, shown with defaults): `AGENT_RESOURCE_ID`/`ENDPOINT
 `GITHUB_PAT`, `TASK_NAME`, `CRON="0 14 * * *"` (daily 14:00 UTC), `RIGHTSIZE_TASK_NAME`,
 `RIGHTSIZE_CRON="0 15 * * 1"` (Mon 15:00 UTC), `REPORT_TASK_NAME`, `REPORT_CRON="0 14 * * *"`
 (daily Cost Overview Live Report), `RIGHTSIZE_REPORT_TASK_NAME`, `RIGHTSIZE_REPORT_CRON="0 15 * * 1"`
-(weekly Rightsizing Savings Live Report), `AGENT_NAME`, `SUB_ID`, `ALERT_EMAIL`, `GITHUB_REPO`,
+(weekly Rightsizing Savings Live Report), `BUDGET_REPORT_TASK_NAME`, `BUDGET_REPORT_CRON="0 16 * * *"`
+(daily Budget Status Live Report), `AGENT_NAME`, `SUB_ID`, `ALERT_EMAIL`, `GITHUB_REPO`,
 `MI_OBJECT_ID`.
 
 > Once this repo is public, drop `GITHUB_PAT` — the server clones it with the host's default GitHub
@@ -112,6 +113,7 @@ What both installers set up:
 | **Scheduled task** `FinOps: Rightsizing Review (Weekly)` | weekly review from [`scheduled-tasks/rightsizing-weekly.yaml`](scheduled-tasks/rightsizing-weekly.yaml) — ranked savings opportunities |
 | **Live Report** `FinOps: Cost Overview` (daily) | driven by [`scheduled-tasks/cost-overview-report-daily.yaml`](scheduled-tasks/cost-overview-report-daily.yaml) — a snapshot cost dashboard (total, daily trend, top services, top resource groups) in Operations Hub, re-versioned daily |
 | **Live Report** `FinOps: Rightsizing Savings` (weekly) | driven by [`scheduled-tasks/rightsizing-savings-report-weekly.yaml`](scheduled-tasks/rightsizing-savings-report-weekly.yaml) — a snapshot savings dashboard (total potential savings, top-opportunities chart, ranked table) in Operations Hub, re-versioned weekly |
+| **Live Report** `FinOps: Budget Status` (daily) | driven by [`scheduled-tasks/budget-status-report-daily.yaml`](scheduled-tasks/budget-status-report-daily.yaml) — a snapshot budget-governance dashboard (spend vs amount, forecast, status, and gated budgets from `finops-budget-governance`) in Operations Hub, re-versioned daily |
 | **RBAC** (optional) | Cost Management Reader on the agent MI when `MI_OBJECT_ID` is set |
 
 > `install.sh` uses `srectl`, which must be built from `Agent.Cli` in the `sreagent-runtime` repo
@@ -129,13 +131,16 @@ the installer's environment variables. Manage it with `srectl scheduledtask list
 
 ## Live Reports (Operations Hub)
 
-The pack also installs two **Live Reports** — self-contained HTML dashboards that appear in
+The pack also installs three **Live Reports** — self-contained HTML dashboards that appear in
 **Operations Hub → Live Reports**:
 
 - **`FinOps: Cost Overview`** (daily) — total spend, daily-spend trend, top services, and top
   resource groups.
 - **`FinOps: Rightsizing Savings`** (weekly) — total potential monthly savings, a top-opportunities
   chart, and a ranked recommendations table from the `finops-rightsizing-advisor` analysis.
+- **`FinOps: Budget Status`** (daily) — each budget's spend vs amount, forecast (Azure's or a
+  run-rate estimate), status, breached thresholds, and any gated budgets, from the
+  `finops-budget-governance` evaluation (budgets `GET` only — no cost pull).
 
 These are **snapshot** reports: there is no external REST API to upload a report, so the pack ships
 a scheduled task that drives the built-in `live_report_authoring` skill to author + `SaveReport` the
@@ -145,7 +150,7 @@ the task's cron (daily / weekly) rather than on every view. Azure cost data (`Us
 settles roughly daily, so daily/weekly refresh matches the data's freshness.
 
 > **Requires Live Reports enabled on the agent** (first-party + Operations Hub; feature flag
-> `EnableLiveReports`). Where it isn't enabled the two report tasks install but no-op at run time; the
+> `EnableLiveReports`). Where it isn't enabled the three report tasks install but no-op at run time; the
 > two email tasks and both skills are unaffected.
 
 ## Install the skill only (manual)

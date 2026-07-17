@@ -1,0 +1,80 @@
+# Proactive daily FinOps Budget Status Live Report refresh.
+#
+# Like the other two report tasks, this drives the built-in `live_report_authoring`
+# skill to author/update a Live Report that appears in Operations Hub > Live
+# Reports. It keeps ONE report named "FinOps: Budget Status" and saves a new
+# VERSION each day (a baked-in snapshot, so it needs no view-time connectors and
+# saves with no approval prompt).
+#
+# Data source is the read-only finops-budget-governance skill: GET the native
+# Azure budgets and evaluate them with the bundled budget.py. No UsageDetails
+# cost pull, no POST — just the budgets GET.
+#
+# Requires Live Reports enabled on the agent (first-party + Operations Hub).
+#
+# Applied by install.sh via `srectl scheduledtask apply --file`. The installer
+# renders the __PLACEHOLDER__ tokens from environment variables before applying.
+# Apply is upsert-by-name, so re-running is idempotent.
+apiVersion: azuresre.ai/v1
+kind: ScheduledTask
+metadata:
+  name: "FinOps: Budget Status (Live Report, Daily)"
+  owner: __ALERT_EMAIL__
+  tags:
+    - finops
+    - finops-live-report
+spec:
+  name: "FinOps: Budget Status (Live Report, Daily)"
+  description: >-
+    Part of the FinOps pack — a daily-refreshed Live Report (Operations Hub)
+    snapshot of Azure budget governance: each budget's spend vs amount, forecast,
+    status, and any budgets that need a decision (over or forecast-to-exceed).
+  agent: __AGENT_NAME__
+  cron: __BUDGET_REPORT_CRON__
+  modelTier: ReasoningHeavy
+  agentPrompt: |
+    Create or update a Live Report now using the `live_report_authoring` skill.
+    This is an explicit request to author and SAVE a Live Report — proceed without
+    asking any questions and do not defer it to chat.
+
+    Report: a FinOps budget-governance snapshot for Azure subscription __SUB_ID__.
+
+    Idempotent daily refresh — keep ONE report and version it:
+    1. Call ListReports. If a report named exactly "FinOps: Budget Status" already
+       exists, call GetReport to check it out and reuse its reportId; pass that
+       reportId to SaveReport (saving a new VERSION). If it does not exist, omit
+       reportId (create it).
+
+    This is a SNAPSHOT report, not a connector-backed live report:
+    2. Pull the data NOW using the read-only `finops-budget-governance` skill. Read
+       its SKILL.md and follow it: GET the native Azure budgets with
+       `az rest --method get --url "https://management.azure.com/subscriptions/__SUB_ID__/providers/Microsoft.Consumption/budgets?api-version=2023-05-01"`.
+       Do NOT use `az rest --method post` or the Cost Management Query API — POST is
+       blocked as a write. Do NOT do a UsageDetails cost pull — budget status comes
+       from the budgets GET only. If the budgets list is empty, author the report
+       stating clearly that no budgets are defined and recommend creating one.
+    3. Read the skill's budget.py into the sandbox and run
+       evaluate_budgets(budgets) to get per-budget status, forecast (Azure's
+       forecastSpend when present, else a run-rate estimate), breached notification
+       thresholds, portfolio summary, and the gated budgets.
+    4. BAKE the results directly into the HTML as static data (a JS constant /
+       static DOM). Do NOT use window.sreagent.callTool anywhere — the report must
+       render fully with no view-time tool calls. Call SaveReport with allowedTools
+       set to an EMPTY list (so it saves with no connector-approval prompt).
+       - name: "FinOps: Budget Status"
+       - description: one sentence noting it is a daily-refreshed snapshot of Azure
+         budget status, part of the FinOps pack, as of today's date.
+    5. Content: the gated budgets (over / forecast-to-exceed) called out at the top
+       as action items with their reason; a Chart.js bar chart of % used and %
+       forecast per budget against the 100% line; and a ranked table (budget, scope,
+       amount, spent + % used, forecast + source, status, breached thresholds).
+       Where a forecast is run-rate (not Azure's), label it an estimate. Where a
+       budget's current spend is 0 on a newly created budget, note it may be an
+       unsynced value (Azure computes currentSpend asynchronously) rather than real
+       zero spend. If no budgets are defined, show a clear empty-state recommending
+       one be created. Single self-contained HTML file; follow the skill's CSP/nonce
+       rules and copy the exact SRI library tags from the reference files. Light
+       mode. Wrap every render block defensively with a small empty-state.
+
+    Read-only Azure only. Do not use any write/POST Azure operations. When done,
+    confirm the saved report id and version number.

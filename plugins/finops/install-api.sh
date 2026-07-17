@@ -52,6 +52,9 @@ REPORT_CRON="${REPORT_CRON:-0 14 * * *}"           # daily live-report refresh (
 REPORT_NAME="${REPORT_NAME:-FinOps: Cost Overview}" # the Live Report's display name (kept stable so daily runs version the same report)
 RIGHTSIZE_REPORT_CRON="${RIGHTSIZE_REPORT_CRON:-0 15 * * 1}"  # weekly rightsizing live-report refresh (Mon 15:00 UTC)
 RIGHTSIZE_REPORT_NAME="${RIGHTSIZE_REPORT_NAME:-FinOps: Rightsizing Savings}" # display name; kept stable so weekly runs version the same report
+BUDGET_REPORT_TASK_NAME="${BUDGET_REPORT_TASK_NAME:-FinOps: Budget Status (Live Report, Daily)}"
+BUDGET_REPORT_CRON="${BUDGET_REPORT_CRON:-0 16 * * *}"       # daily budget live-report refresh (16:00 UTC)
+BUDGET_REPORT_NAME="${BUDGET_REPORT_NAME:-FinOps: Budget Status}" # display name; kept stable so daily runs version the same report
 ALERT_EMAIL="${ALERT_EMAIL:-nimashkowski@microsoft.com}"
 GITHUB_REPO="${GITHUB_REPO:-nirmash/azure-sre-agent-sandbox}"   # repo searched for change correlation
 MI_OBJECT_ID="${MI_OBJECT_ID:-}"                 # agent MI objectId; set to auto-grant Cost Management Reader
@@ -285,6 +288,29 @@ upsert_task "$RIGHTSIZE_REPORT_TASK_NAME" \
   "Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub) of rightsizing / idle-resource savings: total potential savings, a top-opportunities chart, and a ranked recommendations table." \
   "$RIGHTSIZE_REPORT_CRON" "$RIGHTSIZE_REPORT_PROMPT"
 
+say "Upserting scheduled task '$BUDGET_REPORT_TASK_NAME'"
+read -r -d '' BUDGET_REPORT_PROMPT <<EOF || true
+Create or update a Live Report now using the \`live_report_authoring\` skill. This is an explicit request to author and SAVE a Live Report — proceed without asking any questions and do not defer it to chat.
+
+Report: a FinOps budget-governance snapshot for Azure subscription ${SUB_ID}.
+
+Idempotent daily refresh — keep ONE report and version it:
+1. Call ListReports. If a report named exactly "${BUDGET_REPORT_NAME}" already exists, call GetReport to check it out and reuse its reportId; you will pass that reportId to SaveReport (saving a new VERSION). If it does not exist, omit reportId (create it).
+
+This is a SNAPSHOT report, not a connector-backed live report:
+2. Pull the data NOW using the read-only \`finops-budget-governance\` skill. Read its SKILL.md and follow it: GET the native Azure budgets with \`az rest --method get --url "https://management.azure.com/subscriptions/${SUB_ID}/providers/Microsoft.Consumption/budgets?api-version=2023-05-01"\`. Do NOT use \`az rest --method post\` or the Cost Management Query API — POST is blocked as a write. Do NOT do a UsageDetails cost pull — budget status comes from the budgets GET only. If the budgets list is empty, author the report stating clearly that no budgets are defined and recommend creating one.
+3. Read the skill's budget.py into the sandbox and run evaluate_budgets(budgets) to get per-budget status, forecast (Azure's forecastSpend when present, else a run-rate estimate), breached notification thresholds, portfolio summary, and the gated budgets.
+4. BAKE the results directly into the HTML as static data (a JS constant / static DOM). Do NOT use window.sreagent.callTool anywhere — the report must render fully with no view-time tool calls. Call SaveReport with allowedTools set to an EMPTY list (so it saves with no connector-approval prompt).
+   - name: "${BUDGET_REPORT_NAME}"
+   - description: one sentence noting it is a daily-refreshed snapshot of Azure budget status, part of the FinOps pack, as of today's date.
+5. Content: the gated budgets (over / forecast-to-exceed) called out at the top as action items with their reason; a Chart.js bar chart of % used and % forecast per budget against the 100% line; and a ranked table (budget, scope, amount, spent + % used, forecast + source, status, breached thresholds). Where a forecast is run-rate (not Azure's), label it an estimate. Where a budget's current spend is 0 on a newly created budget, note it may be an unsynced value (Azure computes currentSpend asynchronously) rather than real zero spend. If no budgets are defined, show a clear empty-state recommending one be created. Single self-contained HTML file; follow the skill's CSP/nonce rules and copy the exact SRI library tags from the reference files. Light mode. Wrap every render block defensively with a small empty-state.
+
+Read-only Azure only. Do not use any write/POST Azure operations. When done, confirm the saved report id and version number.
+EOF
+upsert_task "$BUDGET_REPORT_TASK_NAME" \
+  "Part of the FinOps pack — a daily-refreshed Live Report (Operations Hub) snapshot of Azure budget governance: each budget's spend vs amount, forecast, status, and any budgets that need a decision." \
+  "$BUDGET_REPORT_CRON" "$BUDGET_REPORT_PROMPT"
+
 # ---- 5. Verify --------------------------------------------------------------
 say "Verifying"
 api GET /api/v2/plugins/installations; resp="$RESP_BODY"
@@ -294,10 +320,12 @@ printf '%s' "$resp" | grep -qi "Cost Anomaly Detection" && ok "daily anomaly tas
 printf '%s' "$resp" | grep -qi "Rightsizing Review"     && ok "weekly rightsizing task present" || warn "rightsizing task not visible"
 printf '%s' "$resp" | grep -qi "Cost Overview"          && ok "daily live-report task present"  || warn "live-report task not visible"
 printf '%s' "$resp" | grep -qi "Rightsizing Savings"    && ok "weekly rightsizing live-report task present" || warn "rightsizing live-report task not visible"
+printf '%s' "$resp" | grep -qi "Budget Status"          && ok "daily budget live-report task present" || warn "budget live-report task not visible"
 
 say "Done — FinOps pack installed via the agent API."
 printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-cost-allocation, finops-budget-governance (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
-printf '  • Tasks  : "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s)\n' \
+printf '  • Tasks  : "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s)\n' \
   "$TASK_NAME" "$CRON" "$RIGHTSIZE_TASK_NAME" "$RIGHTSIZE_CRON" \
-  "$REPORT_TASK_NAME" "$REPORT_CRON" "$RIGHTSIZE_REPORT_TASK_NAME" "$RIGHTSIZE_REPORT_CRON"
-printf '  • Live Reports "%s" and "%s" appear in Operations Hub > Live Reports (requires Live Reports enabled on the agent).\n' "$REPORT_NAME" "$RIGHTSIZE_REPORT_NAME"
+  "$REPORT_TASK_NAME" "$REPORT_CRON" "$RIGHTSIZE_REPORT_TASK_NAME" "$RIGHTSIZE_REPORT_CRON" \
+  "$BUDGET_REPORT_TASK_NAME" "$BUDGET_REPORT_CRON"
+printf '  • Live Reports "%s", "%s", and "%s" appear in Operations Hub > Live Reports (requires Live Reports enabled on the agent).\n' "$REPORT_NAME" "$RIGHTSIZE_REPORT_NAME" "$BUDGET_REPORT_NAME"

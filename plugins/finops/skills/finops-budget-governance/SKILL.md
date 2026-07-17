@@ -47,23 +47,21 @@ az rest --method get \
 
 For a resource-group budget, use
 `.../subscriptions/<SUB_ID>/resourceGroups/<RG>/providers/Microsoft.Consumption/budgets`. The response
-is `{"value": [ ... ]}`; pass the whole `value` array to Step 3. Each budget carries
+is `{"value": [ ... ]}`; pass the whole `value` array to Step 2. Each budget carries
 `properties.amount`, `properties.timeGrain`, `properties.timePeriod`, `properties.currentSpend`
 (`{amount, unit}` — spend so far in the current grain window), an optional `properties.forecastSpend`,
 and `properties.notifications` (each with a percent `threshold` and a `thresholdType` of `Actual` or
-`Forecasted`). **If `value` is empty, skip to Step 4 and report "no budgets defined".**
+`Forecasted`). **If `value` is empty, skip to Step 3 and report "no budgets defined".**
 
-### Step 2 — (Optional) independent month-to-date cross-check
+> **`currentSpend` freshness — do not reconstruct spend with a cost pull.** Azure computes each
+> budget's `currentSpend` asynchronously: a **newly created** budget reads `currentSpend: 0` for hours
+> until the Cost Management pipeline populates it. Treat a `0` on a just-created budget as "not yet
+> synced", not as real zero spend. Do **not** try to reconstruct month-to-date spend with a
+> UsageDetails pull — that heavy, `413`-prone query is unnecessary for budget status, and the clean
+> Cost Management aggregate query is a `POST`, which the agent's read-only tooling blocks. Rely on
+> Azure's `currentSpend` once it syncs.
 
-Only when the user wants to validate Azure's `currentSpend`, pull month-to-date actuals with the
-**same hardened Consumption UsageDetails pull as `finops-cost-anomaly-detection` Step 1** (modern GET
-in 3-day date-windowed slices with `\$top=1000`, `--query` field projection, paginate `nextLink`,
-concatenate; halve the slice and drop `\$top` on a `413`; label partial if truncated). Sum
-`costInUSD` for the current month and pass it as `mtd_spend={budgetName: mtd_usd}` so the skill can
-flag a large discrepancy between the agent's sum and Azure's `currentSpend`. Skip this step for a
-plain budget check.
-
-### Step 3 — Evaluate (bundled budget.py, in-sandbox)
+### Step 2 — Evaluate (bundled budget.py, in-sandbox)
 
 Read the module and run it — do **not** re-implement the logic in the prompt:
 
@@ -73,17 +71,14 @@ read_skill_file(skill_name="finops-budget-governance", file_path="budget.py")
 
 ```python
 from budget import evaluate_budgets
-result = evaluate_budgets(
-    budgets,                       # the value[] array from Step 1
-    mtd_spend=mtd_spend,           # optional, from Step 2  {budgetName: mtd_usd}
-)
+result = evaluate_budgets(budgets)   # the value[] array from Step 1
 ```
 
 `evaluate_budgets` handles all math and classification:
 
 - **budgets**: per-budget evaluation ranked by severity — `current_spend`, `pct_used`,
   `forecast_spend` + `forecast_source` (`azure` when Azure supplied it, else `run-rate`), `pct_forecast`,
-  `status`, the budget's own **breached_notifications**, and the optional **mtd_crosscheck**.
+  `status`, and the budget's own **breached_notifications**.
 - **status** buckets: `over_budget` (already ≥ amount) → `forecast_over` (projected ≥ amount) →
   `at_risk` (≥ 80% used or an Actual threshold breached) → `on_track`.
 - **summary**: portfolio totals (`total_amount`, `total_current`, `total_forecast`) and a count of each
@@ -92,11 +87,12 @@ result = evaluate_budgets(
   (a human decision before more is spent), each with a one-line reason.
 - **no_budgets**: `True` when nothing is defined — report it and recommend creating a budget.
 
-### Step 4 — Report
+### Step 3 — Report
 
 Produce a **budget status table** (name, scope, amount, spent + `pct_used`, forecast + `pct_forecast`
 + source, status), with the **portfolio totals** row and any **gated** budgets called out at the top as
 the action items (with their reason). List each budget's **breached notification thresholds**. If a
-forecast is `run-rate` (not Azure's), say so — it is an estimate. If the month-to-date cross-check
-shows a large delta, flag it. If **no budgets are defined**, say that plainly and recommend creating
-one (pointing at the future `budget-editor` skill). If every budget is `on_track`, say so in one line.
+forecast is `run-rate` (not Azure's), say so — it is an estimate. If a budget's `current_spend` is `0`
+on a newly created budget, note it may be an unsynced value rather than real zero spend. If **no
+budgets are defined**, say that plainly and recommend creating one (pointing at the future
+`budget-editor` skill). If every budget is `on_track`, say so in one line.

@@ -1,0 +1,93 @@
+# Proactive weekly FinOps Cost Optimization Live Report refresh.
+#
+# Like the other report tasks, this drives the built-in `live_report_authoring`
+# skill to author/update a Live Report that appears in Operations Hub > Live
+# Reports. It keeps ONE report named "FinOps: Cost Optimization" and saves a new
+# VERSION each week (a baked-in snapshot, so it needs no view-time connectors and
+# saves with no approval prompt).
+#
+# This is the EXECUTIVE ROLLUP report: it runs the pack's four read-only analyses
+# (anomaly detection, rightsizing, cost allocation, budget governance) and bundles
+# them with the finops-cost-optimization-report skill's summarize.py into one
+# headline + prioritized action list + per-section detail. Read-only, no POST.
+#
+# Requires Live Reports enabled on the agent (first-party + Operations Hub).
+#
+# Applied by install.sh via `srectl scheduledtask apply --file`. The installer
+# renders the __PLACEHOLDER__ tokens from environment variables before applying.
+# Apply is upsert-by-name, so re-running is idempotent.
+apiVersion: azuresre.ai/v1
+kind: ScheduledTask
+metadata:
+  name: "FinOps: Cost Optimization (Live Report, Weekly)"
+  owner: __ALERT_EMAIL__
+  tags:
+    - finops
+    - finops-live-report
+spec:
+  name: "FinOps: Cost Optimization (Live Report, Weekly)"
+  description: >-
+    Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub)
+    executive rollup for Azure: potential savings, cost anomalies, budget status,
+    and governance (policy) findings, with one prioritized "where to act" list.
+  agent: __AGENT_NAME__
+  cron: __COST_OPT_CRON__
+  modelTier: ReasoningHeavy
+  agentPrompt: |
+    Create or update a Live Report now using the `live_report_authoring` skill.
+    This is an explicit request to author and SAVE a Live Report — proceed without
+    asking any questions and do not defer it to chat.
+
+    Report: a FinOps executive cost-optimization rollup for Azure subscription __SUB_ID__.
+
+    Idempotent weekly refresh — keep ONE report and version it:
+    1. Call ListReports. If a report named exactly "FinOps: Cost Optimization" already
+       exists, call GetReport to check it out and reuse its reportId; pass that
+       reportId to SaveReport (saving a new VERSION). If it does not exist, omit
+       reportId (create it).
+
+    This is a SNAPSHOT report, not a connector-backed live report:
+    2. Pull the data NOW by running the pack's four read-only analyses via the
+       `finops-cost-optimization-report` skill. Read its SKILL.md and follow it —
+       run each underlying skill and keep its structured output:
+         a. finops-cost-anomaly-detection -> detect_anomalies(line_items)
+         b. finops-rightsizing-advisor    -> recommend_rightsizing(...)
+         c. finops-cost-allocation        -> allocate_costs(costs, tags, dimension=...)
+         d. finops-budget-governance      -> evaluate_budgets(budgets)
+       Pull the shared cost line items ONCE and feed both anomaly detection and cost
+       allocation. Do NOT use `az rest --method post` or the Cost Management Query
+       API — POST is blocked as a write. If any one analysis cannot run or returns
+       nothing, keep going: the rollup treats a missing input as an empty section.
+    3. Read the skill's summarize.py into the sandbox and run
+       summarize_optimization(anomalies=..., rightsizing=..., allocation=...,
+       budgets=...) to get the executive headline, the single dollar-ranked
+       priorities list (each item labelled with an impact_type), and per-section
+       detail.
+    4. BAKE the results directly into the HTML as static data (a JS constant /
+       static DOM). Do NOT use window.sreagent.callTool anywhere — the report must
+       render fully with no view-time tool calls. Call SaveReport with allowedTools
+       set to an EMPTY list (so it saves with no connector-approval prompt).
+       - name: "FinOps: Cost Optimization"
+       - description: one sentence noting it is a weekly-refreshed executive
+         cost-optimization rollup, part of the FinOps pack, as of today's date.
+    5. Content: an executive HEADLINE row (total monthly spend, total potential
+       monthly savings, anomaly count, budgets over/forecast-over/at-risk, untagged
+       spend); the TOP PRIORITIES table next (rank, category, impact + impact_type,
+       action) as the "where to act first" list; then a section per analysis —
+       rightsizing savings (Chart.js bar chart of top opportunities + table),
+       anomalies (ranked table), budget status (over / forecast-over / at-risk),
+       and governance/policy findings (untagged spend, tag hygiene, budget gates).
+       NEVER sum savings, overruns, spikes, and governance exposure into one number —
+       they are different kinds of dollars; label each priority by its impact_type.
+       Mark run-rate budget forecasts and unvalidated rightsizing rows as
+       estimates / "verify first". Single self-contained HTML file; follow the
+       skill's CSP/nonce rules and copy the exact SRI library tags from the
+       reference files. Light mode. Wrap every render block defensively with a small
+       empty-state. Render a visible "Last refreshed: <UTC date-time> UTC" line in
+       the report header — compute the current UTC timestamp in the sandbox at author
+       time (e.g. Python datetime.now(timezone.utc)) and BAKE it in as static text so
+       a viewer can always see how fresh the data is; note near it that Azure cost
+       data settles ~daily.
+
+    Read-only Azure only. Do not use any write/POST Azure operations. When done,
+    confirm the saved report id and version number.

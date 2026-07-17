@@ -14,7 +14,7 @@ Python (`ExecutePythonCode`).
 | [`finops-cost-allocation`](skills/finops-cost-allocation/SKILL.md) | Join cost line items with tags → showback by team/env/service/costCenter/app/owner; explicit unallocated bucket + ranked untagged spend + tag-hygiene flags | ✅ Wave 2 — offline-tested |
 | [`finops-budget-governance`](skills/finops-budget-governance/SKILL.md) | Read native Azure budgets (`GET Microsoft.Consumption/budgets`) → evaluate each against amount + its own notification thresholds; Azure `forecastSpend` when present, else a client-side run-rate month-end forecast; ranks over / forecast-over / at-risk budgets and flags process gates. Handles the no-budgets-defined case. | ✅ Wave 2 — offline-tested |
 | [`finops-budget-editor`](skills/finops-budget-editor/SKILL.md) | **Advisory** budget right-sizing: read native budgets → recommend an amount (`max(current, forecast) × 1.15`, reusing the run-rate forecast) and render the exact `az rest --method put` command for a human to run. **Stays read-only** — it prints the write command but never executes it; applying it needs Cost Management Contributor. | ✅ Wave 2 — offline-tested |
-| `cost-optimization-report` | Recurring cost report bundling anomalies, rightsizing, budget status, policy violations | 🔜 planned |
+| [`finops-cost-optimization-report`](skills/finops-cost-optimization-report/SKILL.md) | **Executive rollup** — bundles the four read-only analyses (anomalies, rightsizing, cost allocation, budgets) into one headline, a single dollar-ranked priorities list (each item labelled by `impact_type` so savings, overruns, spikes, and governance dollars are never summed together), and per-section detail. Reuses existing signals only — no new data source. Read-only. | ✅ Wave 3 — offline-tested |
 | `finops-for-ai` | Attribute AOAI/Cognitive Services spend per deployment/model from token metrics | 🔜 planned |
 | `cost-vs-reliability` | Join spend with incident/alert history to weigh reliability spend vs risk | 🔜 planned |
 
@@ -29,7 +29,7 @@ skill:
 | **Cost-pull recipe simplification** | Lead the anti-`413` recipe with `$top` + `--query` field projection (the levers that actually shrink the server response); demote date-windowing to a fallback. Live runs showed the `usageStart` slice filter isn't reliably applied, so it's belt-and-suspenders, not primary. | 🔜 planned |
 | **Make repo public** | Flip the repo to public and drop the install PAT once the pack is ready to share. | 🔜 planned |
 
-Engineering wave order: `cost-optimization-report` → `finops-for-ai` → `cost-vs-reliability`. (F4 `budget-governance` — read budgets/forecast — and F5 `budget-editor` — advisory right-sizing that prints the write command but stays read-only — are now built.)
+Engineering wave order: `finops-for-ai` → `cost-vs-reliability`. (F4 `budget-governance` — read budgets/forecast — F5 `budget-editor` — advisory right-sizing that prints the write command but stays read-only — and F6 `cost-optimization-report` — the executive rollup Live Report — are now built.)
 
 ## Prerequisites
 
@@ -52,8 +52,8 @@ required** — line items are aggregated / detected client-side in the sandbox. 
 
 ## Install everything (recommended)
 
-This plugin ships as a **package**: one command installs the skills, the five proactive scheduled
-tasks (two email reviews + three Live Reports), and (optionally) the RBAC grant. The tasks are all
+This plugin ships as a **package**: one command installs the skills, the six proactive scheduled
+tasks (two email reviews + four Live Reports), and (optionally) the RBAC grant. The tasks are all
 prefixed **`FinOps:`** so it's clear in the agent's Scheduled Tasks list that they belong to the
 FinOps pack and were installed alongside the skills.
 
@@ -84,7 +84,8 @@ Configuration (all optional, shown with defaults): `AGENT_RESOURCE_ID`/`ENDPOINT
 `RIGHTSIZE_CRON="0 15 * * 1"` (Mon 15:00 UTC), `REPORT_TASK_NAME`, `REPORT_CRON="0 14 * * *"`
 (daily Cost Overview Live Report), `RIGHTSIZE_REPORT_TASK_NAME`, `RIGHTSIZE_REPORT_CRON="0 15 * * 1"`
 (weekly Rightsizing Savings Live Report), `BUDGET_REPORT_TASK_NAME`, `BUDGET_REPORT_CRON="0 16 * * *"`
-(daily Budget Status Live Report), `AGENT_NAME`, `SUB_ID`, `ALERT_EMAIL`, `GITHUB_REPO`,
+(daily Budget Status Live Report), `COST_OPT_TASK_NAME`, `COST_OPT_CRON="0 17 * * 1"`
+(weekly Cost Optimization Live Report), `AGENT_NAME`, `SUB_ID`, `ALERT_EMAIL`, `GITHUB_REPO`,
 `MI_OBJECT_ID`.
 
 > Once this repo is public, drop `GITHUB_PAT` — the server clones it with the host's default GitHub
@@ -114,6 +115,7 @@ What both installers set up:
 | **Live Report** `FinOps: Cost Overview` (daily) | driven by [`scheduled-tasks/cost-overview-report-daily.yaml`](scheduled-tasks/cost-overview-report-daily.yaml) — a snapshot cost dashboard (total, daily trend, top services, top resource groups) in Operations Hub, re-versioned daily |
 | **Live Report** `FinOps: Rightsizing Savings` (weekly) | driven by [`scheduled-tasks/rightsizing-savings-report-weekly.yaml`](scheduled-tasks/rightsizing-savings-report-weekly.yaml) — a snapshot savings dashboard (total potential savings, top-opportunities chart, ranked table) in Operations Hub, re-versioned weekly |
 | **Live Report** `FinOps: Budget Status` (daily) | driven by [`scheduled-tasks/budget-status-report-daily.yaml`](scheduled-tasks/budget-status-report-daily.yaml) — a snapshot budget-governance dashboard (spend vs amount, forecast, status, and gated budgets from `finops-budget-governance`) in Operations Hub, re-versioned daily |
+| **Live Report** `FinOps: Cost Optimization` (weekly) | driven by [`scheduled-tasks/cost-optimization-report-weekly.yaml`](scheduled-tasks/cost-optimization-report-weekly.yaml) — the executive rollup dashboard (headline, a single dollar-ranked priorities list, and per-section detail across anomalies, rightsizing, allocation, and budgets from `finops-cost-optimization-report`) in Operations Hub, re-versioned weekly |
 | **RBAC** (optional) | Cost Management Reader on the agent MI when `MI_OBJECT_ID` is set |
 
 > `install.sh` uses `srectl`, which must be built from `Agent.Cli` in the `sreagent-runtime` repo
@@ -131,7 +133,7 @@ the installer's environment variables. Manage it with `srectl scheduledtask list
 
 ## Live Reports (Operations Hub)
 
-The pack also installs three **Live Reports** — self-contained HTML dashboards that appear in
+The pack also installs four **Live Reports** — self-contained HTML dashboards that appear in
 **Operations Hub → Live Reports**:
 
 - **`FinOps: Cost Overview`** (daily) — total spend, daily-spend trend, top services, and top
@@ -141,6 +143,10 @@ The pack also installs three **Live Reports** — self-contained HTML dashboards
 - **`FinOps: Budget Status`** (daily) — each budget's spend vs amount, forecast (Azure's or a
   run-rate estimate), status, breached thresholds, and any gated budgets, from the
   `finops-budget-governance` evaluation (budgets `GET` only — no cost pull).
+- **`FinOps: Cost Optimization`** (weekly) — the executive rollup: a headline row, one dollar-ranked
+  priorities list (each item labelled by `impact_type` so different kinds of dollars are never
+  summed), and per-section detail across anomalies, rightsizing, allocation, and budgets, from the
+  `finops-cost-optimization-report` skill.
 
 These are **snapshot** reports: there is no external REST API to upload a report, so the pack ships
 a scheduled task that drives the built-in `live_report_authoring` skill to author + `SaveReport` the
@@ -233,5 +239,5 @@ Both skills' logic is pure Python and offline-testable (`detect.py`, `rightsize.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/          # 76 tests: 8 anomaly, 30 rightsizing, 9 cost-allocation, 14 budget-governance, 15 budget-editor
+pytest tests/          # 85 tests: 8 anomaly, 30 rightsizing, 9 cost-allocation, 14 budget-governance, 15 budget-editor, 9 cost-optimization
 ```

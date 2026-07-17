@@ -13,8 +13,8 @@ Python (`ExecutePythonCode`).
 | [`finops-rightsizing-advisor`](skills/finops-rightsizing-advisor/SKILL.md) | Advisor cost recs + live utilization + inventory → ranked rightsizing / idle-cleanup recommendations (incl. idle Azure Container Apps environments, always-on apps, and warm session pools with no traffic, plus a cost-led sweep so no high-spend resource is missed), validated against real utilization and cost | ✅ Wave 1 — validated live |
 | [`finops-cost-allocation`](skills/finops-cost-allocation/SKILL.md) | Join cost line items with tags → showback by team/env/service/costCenter/app/owner; explicit unallocated bucket + ranked untagged spend + tag-hygiene flags | ✅ Wave 2 — offline-tested |
 | [`finops-budget-governance`](skills/finops-budget-governance/SKILL.md) | Read native Azure budgets (`GET Microsoft.Consumption/budgets`) → evaluate each against amount + its own notification thresholds; Azure `forecastSpend` when present, else a client-side run-rate month-end forecast; ranks over / forecast-over / at-risk budgets and flags process gates. Handles the no-budgets-defined case. | ✅ Wave 2 — offline-tested |
+| [`finops-budget-editor`](skills/finops-budget-editor/SKILL.md) | **Advisory** budget right-sizing: read native budgets → recommend an amount (`max(current, forecast) × 1.15`, reusing the run-rate forecast) and render the exact `az rest --method put` command for a human to run. **Stays read-only** — it prints the write command but never executes it; applying it needs Cost Management Contributor. | ✅ Wave 2 — offline-tested |
 | `cost-optimization-report` | Recurring cost report bundling anomalies, rightsizing, budget status, policy violations | 🔜 planned |
-| `budget-editor` | Propose / set Azure Cost Management budgets (`az consumption budget`). **First write skill** — uses `RunAzCliWriteCommands` behind the agent's approval gate; needs a write RBAC role. Pairs with `budget-governance` (read). | 🔜 planned |
 | `finops-for-ai` | Attribute AOAI/Cognitive Services spend per deployment/model from token metrics | 🔜 planned |
 | `cost-vs-reliability` | Join spend with incident/alert history to weigh reliability spend vs risk | 🔜 planned |
 
@@ -25,11 +25,11 @@ skill:
 
 | Item | What | Status |
 |------|------|--------|
-| **Usage examples per skill** | For each shipped skill (`finops-cost-anomaly-detection`, `finops-rightsizing-advisor`, `finops-cost-allocation`, `finops-budget-governance`): sample input data, an example invocation, and expected output/report — under each skill folder (an `examples/` dir or an Examples section in `SKILL.md`). Do after the implementation work is complete. | 🔜 planned |
+| **Usage examples per skill** | For each shipped skill (`finops-cost-anomaly-detection`, `finops-rightsizing-advisor`, `finops-cost-allocation`, `finops-budget-governance`, `finops-budget-editor`): sample input data, an example invocation, and expected output/report — under each skill folder (an `examples/` dir or an Examples section in `SKILL.md`). Do after the implementation work is complete. | 🔜 planned |
 | **Cost-pull recipe simplification** | Lead the anti-`413` recipe with `$top` + `--query` field projection (the levers that actually shrink the server response); demote date-windowing to a fallback. Live runs showed the `usageStart` slice filter isn't reliably applied, so it's belt-and-suspenders, not primary. | 🔜 planned |
 | **Make repo public** | Flip the repo to public and drop the install PAT once the pack is ready to share. | 🔜 planned |
 
-Engineering wave order: **`budget-editor`** (first write skill) → `cost-optimization-report` → `finops-for-ai` → `cost-vs-reliability`. (F4 `budget-governance` — read budgets/forecast via `GET Microsoft.Consumption/budgets` — is now built.)
+Engineering wave order: `cost-optimization-report` → `finops-for-ai` → `cost-vs-reliability`. (F4 `budget-governance` — read budgets/forecast — and F5 `budget-editor` — advisory right-sizing that prints the write command but stays read-only — are now built.)
 
 ## Prerequisites
 
@@ -39,7 +39,7 @@ SRE Agent's managed identity.
 | Grant | Needed for | Command |
 |-------|-----------|---------|
 | **Cost Management Reader** | All cost skills (`costInUSD` is null without it) | `az role assignment create --assignee <AGENT_MI_OBJECT_ID> --role "Cost Management Reader" --scope /subscriptions/<SUB_ID>` |
-| **Cost Management Contributor** *(write)* | Only the planned `budget-editor` skill — creating/updating budgets is a write (`az consumption budget`) and runs through the agent's approval gate. Not needed by any read-only skill. | `az role assignment create --assignee <AGENT_MI_OBJECT_ID> --role "Cost Management Contributor" --scope /subscriptions/<SUB_ID>` |
+| **Cost Management Contributor** *(write)* | **Not used by the pack.** `finops-budget-editor` is advisory — it prints an `az rest --method put` command but never runs it. A person needs this role only to **apply** that command themselves. No skill in the pack calls a write API. | `az role assignment create --assignee <YOUR_PRINCIPAL> --role "Cost Management Contributor" --scope /subscriptions/<SUB_ID>` |
 | **Log Analytics Reader** + `api.loganalytics.io` scope | Pod/namespace-level AKS rightsizing (Container Insights KQL) | Grant the role on the workspace and allowlist the scope for the MI |
 
 ## Why read-only `az` is sufficient for cost
@@ -233,5 +233,5 @@ Both skills' logic is pure Python and offline-testable (`detect.py`, `rightsize.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/          # 61 tests: 8 anomaly, 30 rightsizing, 9 cost-allocation, 14 budget-governance
+pytest tests/          # 76 tests: 8 anomaly, 30 rightsizing, 9 cost-allocation, 14 budget-governance, 15 budget-editor
 ```

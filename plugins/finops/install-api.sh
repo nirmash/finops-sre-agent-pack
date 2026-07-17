@@ -350,7 +350,7 @@ printf '%s' "$resp" | grep -qi "Budget Status"          && ok "daily budget live
 printf '%s' "$resp" | grep -qi "Cost Optimization"      && ok "weekly cost-optimization live-report task present" || warn "cost-optimization live-report task not visible"
 
 say "Done — FinOps pack installed via the agent API."
-printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-cost-allocation, finops-budget-governance, finops-budget-editor (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
+printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-cost-allocation, finops-budget-governance, finops-budget-editor, finops-cost-optimization-report (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
 printf '  • Tasks  : "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s)\n' \
   "$TASK_NAME" "$CRON" "$RIGHTSIZE_TASK_NAME" "$RIGHTSIZE_CRON" \
   "$REPORT_TASK_NAME" "$REPORT_CRON" "$RIGHTSIZE_REPORT_TASK_NAME" "$RIGHTSIZE_REPORT_CRON" \

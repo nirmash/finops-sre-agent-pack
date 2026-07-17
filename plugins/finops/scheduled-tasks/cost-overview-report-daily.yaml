@@ -71,7 +71,11 @@ spec:
     5. Author a single self-contained HTML file. Follow the skill's CSP/nonce rules
        and copy the exact SRI library tags from the reference files (use Chart.js for
        the daily line chart). Light mode. Wrap every render block defensively with a
-       small empty-state.
+       small empty-state. Render a visible "Last refreshed: <UTC date-time> UTC" line
+       in the report header — compute the current UTC timestamp in the sandbox at
+       author time (e.g. Python datetime.now(timezone.utc)) and BAKE it in as static
+       text so a viewer can always see how fresh the data is. Also note the cost-data
+       settling lag (Azure UsageDetails settle ~daily) near that line.
 
     Read-only Azure only. Do not use any write/POST Azure operations. When done,
     confirm the saved report id and version number.

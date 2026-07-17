@@ -74,7 +74,12 @@ spec:
        zero spend. If no budgets are defined, show a clear empty-state recommending
        one be created. Single self-contained HTML file; follow the skill's CSP/nonce
        rules and copy the exact SRI library tags from the reference files. Light
-       mode. Wrap every render block defensively with a small empty-state.
+       mode. Wrap every render block defensively with a small empty-state. Render a
+       visible "Last refreshed: <UTC date-time> UTC" line in the report header —
+       compute the current UTC timestamp in the sandbox at author time (e.g. Python
+       datetime.now(timezone.utc)) and BAKE it in as static text so a viewer can always
+       see how fresh the data is. Note that Azure computes budget currentSpend
+       asynchronously, so the underlying spend can lag that refresh time.
 
     Read-only Azure only. Do not use any write/POST Azure operations. When done,
     confirm the saved report id and version number.

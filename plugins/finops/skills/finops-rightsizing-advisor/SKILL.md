@@ -124,11 +124,14 @@ field is null) — key on `instanceName` and fall back to `resourceId`. Ids are 
 case-insensitively. This is what lets the skill **rank by dollars** and size idle waste. The Cost
 Management Query/POST API is not needed.
 
-**Bound the page size with `\$top=100`** (retry smaller — 50, then 20 — on a `413 Request Too Large`);
-without it a later `nextLink` page trips a 413 and silently truncates cost, which **understates the
-biggest line items** (a warm session pool's true monthly cost only shows once its full usage window is
-summed). If pagination cannot complete, keep partial rows but **label the savings totals "partial —
-cost pull truncated"** so undercounted dollars aren't reported as final.
+**Pull in 5-day date-windowed slices** (`\$filter=properties/usageStart ge 'A' and properties/usageStart
+lt 'B'`, `\$top=1000`, paginate `nextLink` within each slice, concatenate). This is the reliable way to
+avoid a `413 Request Too Large`: the 413 comes from **deep `nextLink` pagination** over a long range
+(it persists even at `\$top=20`), and short slices keep each slice's pagination shallow. If a slice
+still 413s, halve it (~2–3 days) and drop `\$top` (1000 → 100 → 20). If a slice still cannot complete,
+keep partial rows but **label the savings totals "partial — cost pull truncated"** so the biggest line
+items (a warm session pool's full monthly cost only shows once its whole window is summed) aren't
+undercounted silently.
 
 ### Step 5 — Rank (bundled rightsize.py, in-sandbox)
 

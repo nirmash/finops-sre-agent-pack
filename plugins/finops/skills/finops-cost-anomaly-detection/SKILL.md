@@ -26,17 +26,25 @@ Use the **modern Consumption UsageDetails GET** (the Cost Management Query/POST 
 blocked by the read-only gate and is **not needed** — detection happens client-side). Request a
 trailing window large enough for a baseline plus the current period (default: 35 days).
 
+**Pull in small date-windowed slices — this is the reliable way to avoid a `413 Request Too Large`.**
+The 413 is not primarily a page-size problem: the API rejects `nextLink` continuations once the
+skip-token offset gets deep, so a single 30–35 day query fails on a later page **even at `\$top=20`**.
+Splitting the range into short slices keeps each slice's pagination *shallow*, so it never reaches
+that limit. Walk the window in **5-day slices**, each bounded by `usageStart`:
+
 ```bash
-az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&\$top=100&\$filter=properties/usageStart ge '<START_YYYY-MM-DD>'"
+# for each 5-day [SLICE_START, SLICE_END) slice across the window:
+az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&\$top=1000&\$filter=properties/usageStart ge '<SLICE_START>' and properties/usageStart lt '<SLICE_END>'"
 ```
 
-- **Bound the page size with `\$top` (required):** always pass `\$top=100`. Without a bounded page
-  size the API builds pages large enough to hit a **`413 Request Too Large`** on a later `nextLink`,
-  which silently truncates cost. If a page still returns 413, **retry that same URL with a smaller
-  `\$top` (50, then 20)** before giving up.
-- **Paginate:** follow `nextLink` until absent; concatenate all `value[]` items. `nextLink` already
-  carries the skip token — just GET it as-is (do not re-add `\$top`).
-- **Never proceed on silently-partial cost.** If pagination cannot complete (repeated 413/errors),
+- **Slice the date range (primary defense):** 5-day slices. If a slice still 413s, **halve it**
+  (to ~2–3 days) and, if needed, drop `\$top` (1000 → 100 → 20) for that slice. Shallow pagination
+  per slice is what keeps you under the limit.
+- **Paginate within each slice:** follow `nextLink` until absent; concatenate all `value[]` items
+  across every slice. `nextLink` already carries the skip token — GET it as-is (don't re-add params).
+- **De-dup** by `(resourceId, date, meterId)` when concatenating slices (slice boundaries use a
+  half-open `[ge, lt)` filter, so overlaps shouldn't occur, but de-dup defensively).
+- **Never proceed on silently-partial cost.** If some slice cannot complete even after halving,
   keep the rows you have **but explicitly label every downstream total as "partial — cost pull
   truncated, spend understated"** so the numbers aren't trusted as complete.
 - Flatten each row to the shape `detect.py` expects:

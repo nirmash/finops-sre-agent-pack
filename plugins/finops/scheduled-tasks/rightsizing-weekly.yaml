@@ -42,9 +42,12 @@ spec:
        {resourceId: {requests_total, sample_days}} — flags unused ACA environments, always-on
        apps with no traffic, and warm session pools with no sessions.
     6. Step 4 (cost): GET Consumption UsageDetails (ActualCost) for ~30 days via
-       `az rest --method get` with a bounded page size `&$top=100` (retry smaller — 50,
-       then 20 — on a 413 Request Too Large), paginate nextLink, aggregate costInUSD by
-       resourceId into {resourceId: monthly_usd}. If pagination cannot complete, keep
+       `az rest --method get` in 5-day date-windowed slices
+       (`&$filter=properties/usageStart ge 'A' and properties/usageStart lt 'B'`, `&$top=1000`,
+       paginate nextLink within each slice, concatenate) to avoid the deep-pagination 413
+       (persists even at $top=20 over a long range); if a slice still 413s, halve it and drop
+       $top (1000→100→20). Aggregate costInUSD by
+       resourceId into {resourceId: monthly_usd}. If a slice cannot complete, keep
        partial rows but label savings totals "partial — cost pull truncated".
     7. Step 5 (rank): write the skill's rightsize.py to the sandbox and run
        `recommend_rightsizing(resources=..., utilization=..., activity=..., costs=..., advisor=...)`.

@@ -34,11 +34,13 @@ management-group rollups are out of scope here until needed.
 ### Step 1 — Pull per-resource monthly cost
 
 Use the **same hardened Consumption UsageDetails pull as `finops-cost-anomaly-detection` Step 1**
-(modern GET, `&$top=100`, retry smaller on a `413 Request Too Large`, paginate `nextLink`; if
-pagination cannot complete, keep partial rows but label totals "partial — cost pull truncated"). Over
-the trailing ~30 days, aggregate `costInUSD` by resource id into `{resourceId: monthly_usd}`. In modern
-billing the full ARM resource id is in `properties.instanceName` (`properties.resourceId` is null) —
-key on `instanceName`, fall back to `resourceId`. Ids are matched case-insensitively.
+(modern GET in **5-day date-windowed slices** — `\$top=1000`, paginate `nextLink` within each slice,
+concatenate — which avoids the deep-pagination `413 Request Too Large`; halve the slice and drop
+`\$top` if one still 413s; if a slice cannot complete, keep partial rows but label totals "partial —
+cost pull truncated"). Over the trailing ~30 days, aggregate `costInUSD` by resource id into
+`{resourceId: monthly_usd}`. In modern billing the full ARM resource id is in `properties.instanceName`
+(`properties.resourceId` is null) — key on `instanceName`, fall back to `resourceId`. Ids are matched
+case-insensitively.
 
 ### Step 2 — Pull resource tags (Resource Graph)
 

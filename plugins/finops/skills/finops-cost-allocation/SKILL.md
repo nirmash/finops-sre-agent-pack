@@ -23,11 +23,14 @@ use `finops-rightsizing-advisor`.
 ## Scope
 
 Attributes any resource that lands a cost line item in Consumption UsageDetails — the allocation is
-**service-agnostic** (it works off cost + tags, not a hard-coded resource list). Shared or untaggable
-cost (session pools, networking, shared clusters) is **never force-allocated**: cost with no value for
-the requested dimension is kept in an explicit **unallocated** bucket, and resources missing a value
-for **every** ownership key are listed as **untagged** for follow-up. Cross-charging exports and
-management-group rollups are out of scope here until needed.
+**service-agnostic** (it works off cost + tags, not a hard-coded resource list). It is also
+**tag-generic**: it groups by whatever tag keys exist in your data (a **tag inventory**) and treats
+`team / env / service / costCenter / app / owner` as a *recommended* set to report coverage against —
+not a hard-coded filter. Shared or untaggable cost (session pools, networking, shared clusters) is
+**never force-allocated**: cost with no value for the requested dimension is kept in an explicit
+**unallocated** bucket. A resource with **no tags at all** is listed as **untagged** for follow-up
+(having *some* tag but not the requested dimension is unallocated, not untagged). Cross-charging
+exports and management-group rollups are out of scope here until needed.
 
 ## Procedure
 
@@ -77,8 +80,14 @@ result = allocate_costs(
   shown.
 - **unallocated**: cost of resources with **no value for the requested dimension** — kept as its own
   bucket (never spread onto tagged owners) with `monthly_usd`, `pct`, and the top resources.
-- **untagged_resources** / **untagged_usd**: resources missing a value for **all** ownership keys
-  (`{team, env, service, costCenter, app, owner}` by default) — the tagging backlog, ranked by cost.
+- **untagged_resources** / **untagged_usd**: resources with **no tags at all** — the tagging backlog,
+  ranked by cost.
+- **tag_inventory**: every tag key present in the data with the `resource_count` and `cost_usd` it
+  covers, ranked by cost — the "group by the ones we have" view (includes non-recommended keys).
+- **recommended_coverage** / **missing_recommended**: for each recommended ownership key
+  (`team / env / service / costCenter / app / owner`, overridable via `recommended_keys`), whether it
+  is `present` and the cost/resource share it covers; `missing_recommended` lists the ones with no
+  usage — an adopt-these-tags recommendation.
 - **tag_hygiene**: owner values that collapse to the same group under normalization (e.g. `Prod` vs
   `production`) with the cost each variant carries — these otherwise split one owner's spend.
 
@@ -87,7 +96,10 @@ Run it once per dimension the user cares about (e.g. `team` and `env`).
 ### Step 4 — Report
 
 Produce, for the chosen dimension: a **showback table** (owner, monthly $, % of total, resource
-count) with the **total** and the **unallocated** row called out explicitly; an **untagged-spend**
-section (total $ + top resources to tag); and **tag-hygiene** warnings. Recommend tagging actions
-only — never modify tags. If cost was partial (Step 1 truncation), say so at the top. If everything is
-allocated and there is no untagged spend, say so in one line.
+count) with the **total** and the **unallocated** row called out explicitly; a **tag inventory**
+(every key in use, with cost + resource coverage); a **recommended-coverage** section (which of
+`team / env / service / costCenter / app / owner` are present vs missing, with an adopt-the-missing
+recommendation); an **untagged-spend** section (total $ + top resources to tag — resources with no
+tags at all); and **tag-hygiene** warnings. Recommend tagging actions only — never modify tags. If
+cost was partial (Step 1 truncation), say so at the top. If everything is allocated and there is no
+untagged spend, say so in one line.

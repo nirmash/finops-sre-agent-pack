@@ -59,13 +59,13 @@ def test_unallocated_bucket_not_force_allocated():
     assert out["groups"][0]["monthly_usd"] == 100.0
 
 
-def test_untagged_requires_all_ownership_keys_missing():
+def test_untagged_means_no_tags_at_all():
     costs = {A: 10.0, B: 20.0, C: 30.0}
-    # A has an env tag (so tagged, though no team); B has nothing; C has owner
-    tags = {A: {"env": "prod"}, C: {"owner": "nir"}}
+    # A has only a NON-recommended tag (foo); B has nothing; C has a recommended tag
+    tags = {A: {"foo": "bar"}, C: {"owner": "nir"}}
     out = allocate_costs(costs, tags, dimension="team")
     untagged_ids = [r["resourceId"] for r in out["untagged_resources"]]
-    assert untagged_ids == [B]  # only B is missing ALL ownership keys
+    assert untagged_ids == [B]  # only B has NO tags at all; A's non-recommended tag still counts
     assert out["untagged_usd"] == 20.0
 
 
@@ -113,3 +113,51 @@ def test_non_numeric_cost_ignored():
     tags = {A: {"team": "x"}}
     out = allocate_costs(costs, tags, dimension="team")
     assert out["total_usd"] == 100.0
+
+
+def test_empty_inputs_have_new_tag_fields():
+    out = allocate_costs()
+    assert out["tag_inventory"] == []
+    assert out["missing_recommended"] == list(allocate.RECOMMENDED_TAG_KEYS)
+    assert all(c["present"] is False for c in out["recommended_coverage"])
+
+
+def test_tag_inventory_lists_every_key_present_ranked_by_cost():
+    costs = {A: 100.0, B: 40.0, C: 60.0}
+    # A: team+env, B: env only, C: a non-recommended key
+    tags = {A: {"team": "pay", "env": "prod"}, B: {"env": "dev"}, C: {"foo": "bar"}}
+    out = allocate_costs(costs, tags, dimension="team")
+    inv = {t["key"]: t for t in out["tag_inventory"]}
+    assert inv["env"]["resource_count"] == 2
+    assert inv["env"]["cost_usd"] == 140.0     # A(100) + B(40)
+    assert inv["team"]["cost_usd"] == 100.0
+    assert inv["foo"]["cost_usd"] == 60.0       # non-recommended keys still inventoried
+    # ranked by cost desc: env(140) > team(100) > foo(60)
+    assert [t["key"] for t in out["tag_inventory"]] == ["env", "team", "foo"]
+
+
+def test_recommended_coverage_present_and_missing():
+    costs = {A: 100.0, B: 100.0}
+    tags = {A: {"team": "pay"}, B: {"env": "prod"}}
+    out = allocate_costs(costs, tags, dimension="team")
+    cov = {c["key"]: c for c in out["recommended_coverage"]}
+    assert cov["team"]["present"] is True
+    assert cov["team"]["cost_usd"] == 100.0
+    assert cov["team"]["pct"] == 50.0
+    assert cov["service"]["present"] is False
+    assert cov["service"]["cost_usd"] == 0.0
+    # recommended order is preserved
+    assert [c["key"] for c in out["recommended_coverage"]] == list(allocate.RECOMMENDED_TAG_KEYS)
+    assert "team" not in out["missing_recommended"]
+    assert "service" in out["missing_recommended"]
+    assert "costCenter" in out["missing_recommended"]
+
+
+def test_recommended_keys_overridable():
+    costs = {A: 100.0}
+    tags = {A: {"project": "atlas"}}
+    out = allocate_costs(costs, tags, dimension="project", recommended_keys=("project", "owner"))
+    cov = {c["key"]: c for c in out["recommended_coverage"]}
+    assert set(cov) == {"project", "owner"}
+    assert cov["project"]["present"] is True
+    assert out["missing_recommended"] == ["owner"]

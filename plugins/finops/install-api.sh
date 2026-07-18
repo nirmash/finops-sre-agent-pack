@@ -58,6 +58,9 @@ BUDGET_REPORT_NAME="${BUDGET_REPORT_NAME:-FinOps: Budget Status}" # display name
 COST_OPT_TASK_NAME="${COST_OPT_TASK_NAME:-FinOps: Cost Optimization (Live Report, Weekly)}"
 COST_OPT_CRON="${COST_OPT_CRON:-0 17 * * 1}"                 # weekly executive rollup live-report refresh (Mon 17:00 UTC)
 COST_OPT_NAME="${COST_OPT_NAME:-FinOps: Cost Optimization}"  # display name; kept stable so weekly runs version the same report
+AI_REPORT_TASK_NAME="${AI_REPORT_TASK_NAME:-FinOps: AI Spend (Live Report, Weekly)}"
+AI_REPORT_CRON="${AI_REPORT_CRON:-0 18 * * 1}"               # weekly AI-spend live-report refresh (Mon 18:00 UTC)
+AI_REPORT_NAME="${AI_REPORT_NAME:-FinOps: AI Spend}"         # display name; kept stable so weekly runs version the same report
 ALERT_EMAIL="${ALERT_EMAIL:-nimashkowski@microsoft.com}"
 GITHUB_REPO="${GITHUB_REPO:-nirmash/azure-sre-agent-sandbox}"   # repo searched for change correlation
 MI_OBJECT_ID="${MI_OBJECT_ID:-}"                 # agent MI objectId; set to auto-grant Cost Management Reader
@@ -337,6 +340,29 @@ upsert_task "$COST_OPT_TASK_NAME" \
   "Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub) executive rollup for Azure: potential savings, cost anomalies, budget status, and governance (policy) findings, with one prioritized action list." \
   "$COST_OPT_CRON" "$COST_OPT_PROMPT"
 
+say "Upserting scheduled task '$AI_REPORT_TASK_NAME'"
+read -r -d '' AI_REPORT_PROMPT <<EOF || true
+Create or update a Live Report now using the \`live_report_authoring\` skill. This is an explicit request to author and SAVE a Live Report — proceed without asking any questions and do not defer it to chat.
+
+Report: a FinOps Azure AI spend breakdown for subscription ${SUB_ID}.
+
+Idempotent weekly refresh — keep ONE report and version it:
+1. Call ListReports. If a report named exactly "${AI_REPORT_NAME}" already exists, call GetReport to check it out and reuse its reportId; you will pass that reportId to SaveReport (saving a new VERSION). If it does not exist, omit reportId (create it).
+
+This is a SNAPSHOT report, not a connector-backed live report:
+2. Pull the data NOW using the read-only \`finops-for-ai\` skill. Read its SKILL.md and follow it: pull the modern Consumption UsageDetails line items with the hardened date-windowed GET, PROJECTING the extra fields consumedService + meterSubCategory + meterName (needed to classify AI spend and parse the model), then KEEP ONLY rows whose consumedService is Microsoft.CognitiveServices or Microsoft.MachineLearningServices (case-insensitive). Do NOT filter on kind or on a meter category — that would drop Foundry AIServices accounts. Do NOT use \`az rest --method post\` or the Cost Management Query API — POST is blocked as a write. Optionally pull each resource's kind via a Resource Graph GET to label OpenAI vs AIServices vs the ML kind.
+3. Read the skill's attribute.py into the sandbox and run attribute_ai_costs(line_items=..., resource_kinds=...) to get total AI spend, the service-family split, the token-vs-compute meter split, per-resource and per-model breakdowns, top drivers, and the read-only hints.
+4. BAKE the results directly into the HTML as static data (a JS constant / static DOM). Do NOT use window.sreagent.callTool anywhere — the report must render fully with no view-time tool calls. Call SaveReport with allowedTools set to an EMPTY list (so it saves with no connector-approval prompt).
+   - name: "${AI_REPORT_NAME}"
+   - description: one sentence noting it is a weekly-refreshed snapshot of Azure AI spend (OpenAI + Foundry + ML), part of the FinOps pack, as of today's date.
+5. Content: a HEADLINE row (total AI spend, resource count, model count, and the model-token vs compute dollar split); a Chart.js bar chart of the top models by spend; a by-model table (model, monthly \$, % of model spend, # resources); a by-resource table (resource, kind, service family, top model, monthly \$); the top cost drivers; and the hints as a "where to look first" list. NEVER sum model-token and compute dollars into a single number — they are different cost drivers. Mark PTU/commitment and compute-with-no-tokens hints as estimates / "verify first" (true idle detection needs utilization metrics). Single self-contained HTML file; follow the skill's CSP/nonce rules and copy the exact SRI library tags from the reference files. Light mode. Wrap every render block defensively with a small empty-state (a subscription may have no AI spend — say so clearly). Render a visible "Last refreshed: <UTC date-time> UTC" line in the report header — compute the current UTC timestamp in the sandbox at author time (e.g. Python datetime.now(timezone.utc)) and BAKE it in as static text so a viewer can always see how fresh the data is; note near it that Azure cost data settles ~daily.
+
+Read-only Azure only. Do not use any write/POST Azure operations. When done, confirm the saved report id and version number.
+EOF
+upsert_task "$AI_REPORT_TASK_NAME" \
+  "Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub) of Azure AI spend: total AI cost, per-model and per-resource breakdowns, a token-vs-compute split, top cost drivers, and read-only optimization hints. Covers Azure OpenAI + AI Foundry + ML." \
+  "$AI_REPORT_CRON" "$AI_REPORT_PROMPT"
+
 # ---- 5. Verify --------------------------------------------------------------
 say "Verifying"
 api GET /api/v2/plugins/installations; resp="$RESP_BODY"
@@ -348,11 +374,13 @@ printf '%s' "$resp" | grep -qi "Cost Overview"          && ok "daily live-report
 printf '%s' "$resp" | grep -qi "Rightsizing Savings"    && ok "weekly rightsizing live-report task present" || warn "rightsizing live-report task not visible"
 printf '%s' "$resp" | grep -qi "Budget Status"          && ok "daily budget live-report task present" || warn "budget live-report task not visible"
 printf '%s' "$resp" | grep -qi "Cost Optimization"      && ok "weekly cost-optimization live-report task present" || warn "cost-optimization live-report task not visible"
+printf '%s' "$resp" | grep -qi "AI Spend"               && ok "weekly AI-spend live-report task present" || warn "AI-spend live-report task not visible"
 
 say "Done — FinOps pack installed via the agent API."
-printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-cost-allocation, finops-budget-governance, finops-budget-editor, finops-cost-optimization-report (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
-printf '  • Tasks  : "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s)\n' \
+printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-cost-allocation, finops-budget-governance, finops-budget-editor, finops-cost-optimization-report, finops-for-ai (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
+printf '  • Tasks  : "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s)\n' \
   "$TASK_NAME" "$CRON" "$RIGHTSIZE_TASK_NAME" "$RIGHTSIZE_CRON" \
   "$REPORT_TASK_NAME" "$REPORT_CRON" "$RIGHTSIZE_REPORT_TASK_NAME" "$RIGHTSIZE_REPORT_CRON" \
-  "$BUDGET_REPORT_TASK_NAME" "$BUDGET_REPORT_CRON" "$COST_OPT_TASK_NAME" "$COST_OPT_CRON"
-printf '  • Live Reports "%s", "%s", "%s", and "%s" appear in Operations Hub > Live Reports (requires Live Reports enabled on the agent).\n' "$REPORT_NAME" "$RIGHTSIZE_REPORT_NAME" "$BUDGET_REPORT_NAME" "$COST_OPT_NAME"
+  "$BUDGET_REPORT_TASK_NAME" "$BUDGET_REPORT_CRON" "$COST_OPT_TASK_NAME" "$COST_OPT_CRON" \
+  "$AI_REPORT_TASK_NAME" "$AI_REPORT_CRON"
+printf '  • Live Reports "%s", "%s", "%s", "%s", and "%s" appear in Operations Hub > Live Reports (requires Live Reports enabled on the agent).\n' "$REPORT_NAME" "$RIGHTSIZE_REPORT_NAME" "$BUDGET_REPORT_NAME" "$COST_OPT_NAME" "$AI_REPORT_NAME"

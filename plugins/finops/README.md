@@ -16,20 +16,20 @@ Python (`ExecutePythonCode`).
 | [`finops-budget-editor`](skills/finops-budget-editor/SKILL.md) | **Advisory** budget right-sizing: read native budgets → recommend an amount (`max(current, forecast) × 1.15`, reusing the run-rate forecast) and render the exact `az rest --method put` command for a human to run. **Stays read-only** — it prints the write command but never executes it; applying it needs Cost Management Contributor. | ✅ Wave 2 — offline-tested |
 | [`finops-cost-optimization-report`](skills/finops-cost-optimization-report/SKILL.md) | **Executive rollup** — bundles the four read-only analyses (anomalies, rightsizing, cost allocation, budgets) into one headline, a single dollar-ranked priorities list (each item labelled by `impact_type` so savings, overruns, spikes, and governance dollars are never summed together), and per-section detail. Reuses existing signals only — no new data source. Read-only. | ✅ Wave 3 — offline-tested |
 | [`finops-for-ai`](skills/finops-for-ai/SKILL.md) | Attribute Azure AI spend per resource / model / service family from the existing UsageDetails pull. Scopes by **`ConsumedService == Microsoft.CognitiveServices`** (captures both classic Azure OpenAI `kind=OpenAI` **and** Azure AI Foundry `kind=AIServices` accounts — see the AI resource taxonomy note below) **plus `Microsoft.MachineLearningServices`** (Foundry hub/project compute, managed online endpoints, fine-tuning), splits token/model meters from compute meters, ranks top drivers, and emits light read-only hints. | ✅ Wave 3 — offline-tested |
-| `cost-vs-reliability` | Join spend with incident/alert history to weigh reliability spend vs risk | 🔜 planned |
+| [`finops-cost-vs-reliability`](skills/finops-cost-vs-reliability/SKILL.md) | Join monthly UsageDetails cost with alerts (primary reliability pain), Resource Health unavailable/degraded events, and Advisor HighAvailability recommendations → per-resource ranking, per-service rollup, high-pain/low-spend HA investment candidates, and high-spend/no-pain verify-before-cutting hints. Read-only weighted-count scoring. | ✅ Wave 4 — offline-tested |
 
 ## Roadmap & backlog
 
-Planned **skills** are listed in the table above (🔜). Cross-cutting work items not represented as a
+All planned **skills** are now built. Remaining cross-cutting work items not represented as a
 skill:
 
 | Item | What | Status |
 |------|------|--------|
-| **Usage examples per skill** | For each shipped skill (`finops-cost-anomaly-detection`, `finops-rightsizing-advisor`, `finops-cost-allocation`, `finops-budget-governance`, `finops-budget-editor`, `finops-cost-optimization-report`, `finops-for-ai`): sample input data, an example invocation, and expected output/report — under each skill folder (an `examples/` dir or an Examples section in `SKILL.md`). Do after the implementation work is complete. | 🔜 planned |
+| **Usage examples per skill** | For each shipped skill (`finops-cost-anomaly-detection`, `finops-rightsizing-advisor`, `finops-cost-allocation`, `finops-budget-governance`, `finops-budget-editor`, `finops-cost-optimization-report`, `finops-for-ai`, `finops-cost-vs-reliability`): sample input data, an example invocation, and expected output/report — under each skill folder (an `examples/` dir or an Examples section in `SKILL.md`). Do after the implementation work is complete. | 🔜 planned |
 | **Cost-pull recipe simplification** | Lead the anti-`413` recipe with `$top` + `--query` field projection (the levers that actually shrink the server response); demote date-windowing to a fallback. Live runs showed the `usageStart` slice filter isn't reliably applied, so it's belt-and-suspenders, not primary. | 🔜 planned |
 | **Make repo public** | Flip the repo to public and drop the install PAT once the pack is ready to share. | 🔜 planned |
 
-Engineering wave order: `cost-vs-reliability` is the last planned skill. (F4 `budget-governance` — read budgets/forecast — F5 `budget-editor` — advisory right-sizing that prints the write command but stays read-only — F6 `cost-optimization-report` — the executive rollup Live Report — and `finops-for-ai` — the AI-spend attribution skill + Live Report — are now built.)
+Engineering wave order is complete: Wave 1 anomaly + rightsizing, Wave 2 allocation + budgets, Wave 3 executive/AI reports, and Wave 4 `finops-cost-vs-reliability` + Live Report are now built.
 
 ### Design note — AI resource taxonomy for `finops-for-ai` (#2)
 
@@ -77,8 +77,8 @@ required** — line items are aggregated / detected client-side in the sandbox. 
 
 ## Install everything (recommended)
 
-This plugin ships as a **package**: one command installs the skills, the seven proactive scheduled
-tasks (two email reviews + five Live Reports), and (optionally) the RBAC grant. The tasks are all
+This plugin ships as a **package**: one command installs the skills, the eight proactive scheduled
+tasks (two email reviews + six Live Reports), and (optionally) the RBAC grant. The tasks are all
 prefixed **`FinOps:`** so it's clear in the agent's Scheduled Tasks list that they belong to the
 FinOps pack and were installed alongside the skills.
 
@@ -87,8 +87,8 @@ FinOps pack and were installed alongside the skills.
 [`install-api.sh`](install-api.sh) installs everything by calling the agent's own management API
 directly (the same control-plane `srectl` uses) — so it needs only `az` (logged in), `curl`, and
 `python3`. No .NET build, no private NuGet feed. It (1) registers this repo as a plugin marketplace,
-(2) installs the `finops` plugin (the server clones the repo and copies **both** skill dirs —
-`SKILL.md` + `detect.py`/`rightsize.py`), and (3) upserts the daily and weekly scheduled tasks.
+(2) installs the `finops` plugin (the server clones the repo and imports all skill dirs —
+`SKILL.md` plus each bundled pure-Python core), and (3) upserts the daily and weekly scheduled tasks.
 Re-running is safe.
 
 ```bash
@@ -111,16 +111,19 @@ Configuration (all optional, shown with defaults): `AGENT_RESOURCE_ID`/`ENDPOINT
 (weekly Rightsizing Savings Live Report), `BUDGET_REPORT_TASK_NAME`, `BUDGET_REPORT_CRON="0 16 * * *"`
 (daily Budget Status Live Report), `COST_OPT_TASK_NAME`, `COST_OPT_CRON="0 17 * * 1"`
 (weekly Cost Optimization Live Report), `AI_REPORT_TASK_NAME`, `AI_REPORT_CRON="0 18 * * 1"`
-(weekly AI Spend Live Report), `AGENT_NAME`, `SUB_ID`, `ALERT_EMAIL`, `GITHUB_REPO`,
+(weekly AI Spend Live Report), `RELIABILITY_REPORT_TASK_NAME`, `RELIABILITY_REPORT_CRON="0 19 * * 1"`
+(weekly Cost vs Reliability Live Report), `RELIABILITY_REPORT_NAME="FinOps: Cost vs Reliability"`,
+`AGENT_NAME`, `SUB_ID`, `ALERT_EMAIL`, `GITHUB_REPO`,
 `MI_OBJECT_ID`.
 
 > Once this repo is public, drop `GITHUB_PAT` — the server clones it with the host's default GitHub
 > identity.
 
-### Option B — srectl installer
+### Option B — legacy srectl installer
 
-[`install.sh`](install.sh) does the same thing via `srectl` (skill apply + scheduledtask apply for
-both skills and both tasks, upsert by name). Point srectl at your agent first
+[`install.sh`](install.sh) applies the original anomaly/rightsizing skills and early scheduled tasks via
+`srectl` (skill apply + scheduledtask apply, upsert by name). Prefer Option A for the full eight-skill /
+eight-task pack. Point srectl at your agent first
 (`srectl init --resource-url <endpoint>`).
 
 ```bash
@@ -130,12 +133,13 @@ AGENT_NAME="My Agent" SUB_ID=<subscription-id> ./install.sh
 MI_OBJECT_ID=<agent-mi-object-id> AGENT_NAME="My Agent" SUB_ID=<sub> ./install.sh
 ```
 
-What both installers set up:
+What the API installer sets up:
 
 | Component | What / where |
 |-----------|--------------|
 | **Skill** `finops-cost-anomaly-detection` | the whole skill dir `skills/finops-cost-anomaly-detection/` (SKILL.md + `detect.py`) |
 | **Skill** `finops-rightsizing-advisor` | the whole skill dir `skills/finops-rightsizing-advisor/` (SKILL.md + `rightsize.py`) |
+| **Skill** `finops-cost-vs-reliability` | the whole skill dir `skills/finops-cost-vs-reliability/` (SKILL.md + `reliability.py`) |
 | **Scheduled task** `FinOps: Cost Anomaly Detection (Daily)` | daily scan from [`scheduled-tasks/cost-anomaly-daily.yaml`](scheduled-tasks/cost-anomaly-daily.yaml) — alerts only on a spike |
 | **Scheduled task** `FinOps: Rightsizing Review (Weekly)` | weekly review from [`scheduled-tasks/rightsizing-weekly.yaml`](scheduled-tasks/rightsizing-weekly.yaml) — ranked savings opportunities |
 | **Live Report** `FinOps: Cost Overview` (daily) | driven by [`scheduled-tasks/cost-overview-report-daily.yaml`](scheduled-tasks/cost-overview-report-daily.yaml) — a snapshot cost dashboard (total, daily trend, top services, top resource groups) in Operations Hub, re-versioned daily |
@@ -143,6 +147,7 @@ What both installers set up:
 | **Live Report** `FinOps: Budget Status` (daily) | driven by [`scheduled-tasks/budget-status-report-daily.yaml`](scheduled-tasks/budget-status-report-daily.yaml) — a snapshot budget-governance dashboard (spend vs amount, forecast, status, and gated budgets from `finops-budget-governance`) in Operations Hub, re-versioned daily |
 | **Live Report** `FinOps: Cost Optimization` (weekly) | driven by [`scheduled-tasks/cost-optimization-report-weekly.yaml`](scheduled-tasks/cost-optimization-report-weekly.yaml) — the executive rollup dashboard (headline, a single dollar-ranked priorities list, and per-section detail across anomalies, rightsizing, allocation, and budgets from `finops-cost-optimization-report`) in Operations Hub, re-versioned weekly |
 | **Live Report** `FinOps: AI Spend` (weekly) | driven by [`scheduled-tasks/ai-spend-report-weekly.yaml`](scheduled-tasks/ai-spend-report-weekly.yaml) — an Azure AI cost dashboard (total AI spend, per-model + per-resource breakdowns, token-vs-compute split, top drivers, and read-only hints from `finops-for-ai`; covers Azure OpenAI + AI Foundry + ML) in Operations Hub, re-versioned weekly |
+| **Live Report** `FinOps: Cost vs Reliability` (weekly) | driven by [`scheduled-tasks/cost-vs-reliability-report-weekly.yaml`](scheduled-tasks/cost-vs-reliability-report-weekly.yaml) — a cost-vs-reliability dashboard (spend + pain table, service rollup, HA investment candidates, verify-before-cutting candidates, and data-quality notes from `finops-cost-vs-reliability`) in Operations Hub, re-versioned weekly |
 | **RBAC** (optional) | Cost Management Reader on the agent MI when `MI_OBJECT_ID` is set |
 
 > `install.sh` uses `srectl`, which must be built from `Agent.Cli` in the `sreagent-runtime` repo
@@ -160,7 +165,7 @@ the installer's environment variables. Manage it with `srectl scheduledtask list
 
 ## Live Reports (Operations Hub)
 
-The pack also installs five **Live Reports** — self-contained HTML dashboards that appear in
+The pack also installs six **Live Reports** — self-contained HTML dashboards that appear in
 **Operations Hub → Live Reports**:
 
 - **`FinOps: Cost Overview`** (daily) — total spend, daily-spend trend, top services, and top
@@ -178,6 +183,10 @@ The pack also installs five **Live Reports** — self-contained HTML dashboards 
   family, with a token-vs-compute split, top cost drivers, and read-only optimization hints, from the
   `finops-for-ai` skill. Covers classic Azure OpenAI **and** Azure AI Foundry (`kind=AIServices`)
   accounts plus `Microsoft.MachineLearningServices` — see the AI resource taxonomy note above.
+- **`FinOps: Cost vs Reliability`** (weekly) — monthly cost joined to weighted reliability pain from
+  alerts (primary), Resource Health, and Advisor HighAvailability, with a spend + pain table, service
+  rollup, HA investment candidates, verify-before-cutting candidates, and data-quality notes from the
+  `finops-cost-vs-reliability` skill.
 
 These are **snapshot** reports: there is no external REST API to upload a report, so the pack ships
 a scheduled task that drives the built-in `live_report_authoring` skill to author + `SaveReport` the
@@ -265,10 +274,10 @@ All 6 validation parts passed. The **weekly proactive scheduled task**
 
 ## Test
 
-Both skills' logic is pure Python and offline-testable (`detect.py`, `rightsize.py`, `allocate.py`,
-`budget.py`):
+The skills' logic is pure Python and offline-testable (`detect.py`, `rightsize.py`, `allocate.py`,
+`budget.py`, `recommend.py`, `summarize.py`, `attribute.py`, `reliability.py`):
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/          # 104 tests: 8 anomaly, 30 rightsizing, 13 cost-allocation, 14 budget-governance, 15 budget-editor, 9 cost-optimization, 15 finops-for-ai
+pytest tests/          # 120 tests: 8 anomaly, 30 rightsizing, 13 cost-allocation, 14 budget-governance, 15 budget-editor, 9 cost-optimization, 15 finops-for-ai, 16 cost-vs-reliability
 ```

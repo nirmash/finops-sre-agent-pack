@@ -14,7 +14,7 @@ Structure mirrors [Azure/sre-agent-plugins](https://github.com/Azure/sre-agent-p
 
 | Plugin | Description |
 |--------|-------------|
-| [`finops`](plugins/finops/README.md) | **FinOps pack** — the `finops-cost-anomaly-detection` skill (+ daily `FinOps: Cost Anomaly Detection (Daily)` task) and the `finops-rightsizing-advisor` skill (+ weekly `FinOps: Rightsizing Review (Weekly)` task), installable with one command via the agent API ([`plugins/finops/install-api.sh`](plugins/finops/install-api.sh), no srectl needed) or [`install.sh`](plugins/finops/install.sh). Plus planned showback, budget governance, FinOps-for-AI, reporting, and cost-vs-reliability skills. |
+| [`finops`](plugins/finops/README.md) | **FinOps pack** — eight read-only FinOps skills (anomaly detection, rightsizing, cost allocation, budget governance/editor, executive optimization, AI spend attribution, and cost-vs-reliability) plus eight proactive scheduled tasks including six Live Reports, installable with one command via the agent API ([`plugins/finops/install-api.sh`](plugins/finops/install-api.sh), no srectl needed). |
 
 ## Adding plugins
 
@@ -32,5 +32,5 @@ written.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/          # 104 tests: 8 anomaly, 30 rightsizing, 13 cost-allocation, 14 budget-governance, 15 budget-editor, 9 cost-optimization, 15 finops-for-ai
+pytest tests/          # 120 tests: 8 anomaly, 30 rightsizing, 13 cost-allocation, 14 budget-governance, 15 budget-editor, 9 cost-optimization, 15 finops-for-ai, 16 cost-vs-reliability
 ```

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# install-api.sh — client-side installer for the FinOps cost-anomaly package.
+# install-api.sh — client-side installer for the FinOps package.
 #
 # Installs EVERYTHING via the SRE Agent's own management API — no srectl, no .NET,
 # no private NuGet feed. It does exactly what srectl does under the hood:
@@ -11,7 +11,7 @@
 #   1. Register this repo as a plugin marketplace         POST /api/v2/plugins/marketplaces
 #   2. Install the `finops` plugin (server clones + copies POST .../plugins/finops/install
 #      the whole skill dir: SKILL.md + detect.py)
-#   3. Upsert the daily "Cost Anomaly Detection" task     POST/PUT /api/v1/scheduledtasks
+#   3. Upsert the proactive FinOps scheduled tasks       POST/PUT /api/v1/scheduledtasks
 #
 # Caller identity (az login) must hold the agent's ARM write actions
 # (AgentExtendedAgentWrite, AgentScheduledTaskWrite) — the resource owner does.
@@ -61,6 +61,9 @@ COST_OPT_NAME="${COST_OPT_NAME:-FinOps: Cost Optimization}"  # display name; kep
 AI_REPORT_TASK_NAME="${AI_REPORT_TASK_NAME:-FinOps: AI Spend (Live Report, Weekly)}"
 AI_REPORT_CRON="${AI_REPORT_CRON:-0 18 * * 1}"               # weekly AI-spend live-report refresh (Mon 18:00 UTC)
 AI_REPORT_NAME="${AI_REPORT_NAME:-FinOps: AI Spend}"         # display name; kept stable so weekly runs version the same report
+RELIABILITY_REPORT_TASK_NAME="${RELIABILITY_REPORT_TASK_NAME:-FinOps: Cost vs Reliability (Live Report, Weekly)}"
+RELIABILITY_REPORT_CRON="${RELIABILITY_REPORT_CRON:-0 19 * * 1}" # weekly cost-vs-reliability live-report refresh (Mon 19:00 UTC)
+RELIABILITY_REPORT_NAME="${RELIABILITY_REPORT_NAME:-FinOps: Cost vs Reliability}" # display name; kept stable so weekly runs version the same report
 ALERT_EMAIL="${ALERT_EMAIL:-nimashkowski@microsoft.com}"
 GITHUB_REPO="${GITHUB_REPO:-nirmash/azure-sre-agent-sandbox}"   # repo searched for change correlation
 MI_OBJECT_ID="${MI_OBJECT_ID:-}"                 # agent MI objectId; set to auto-grant Cost Management Reader
@@ -363,6 +366,29 @@ upsert_task "$AI_REPORT_TASK_NAME" \
   "Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub) of Azure AI spend: total AI cost, per-model and per-resource breakdowns, a token-vs-compute split, top cost drivers, and read-only optimization hints. Covers Azure OpenAI + AI Foundry + ML." \
   "$AI_REPORT_CRON" "$AI_REPORT_PROMPT"
 
+say "Upserting scheduled task '$RELIABILITY_REPORT_TASK_NAME'"
+read -r -d '' RELIABILITY_REPORT_PROMPT <<EOF || true
+Create or update a Live Report now using the \`live_report_authoring\` skill. This is an explicit request to author and SAVE a Live Report — proceed without asking any questions and do not defer it to chat.
+
+Report: a FinOps cost-vs-reliability snapshot for Azure subscription ${SUB_ID}.
+
+Idempotent weekly refresh — keep ONE report and version it:
+1. Call ListReports. If a report named exactly "${RELIABILITY_REPORT_NAME}" already exists, call GetReport to check it out and reuse its reportId; you will pass that reportId to SaveReport (saving a new VERSION). If it does not exist, omit reportId (create it).
+
+This is a SNAPSHOT report, not a connector-backed live report:
+2. Pull the data NOW using the read-only \`finops-cost-vs-reliability\` skill. Read its SKILL.md and follow it: pull Consumption UsageDetails (ActualCost) with GET only; pull Azure Monitor alerts via GET from Microsoft.AlertsManagement/alerts; pull Resource Health availabilityStatuses via GET and keep Unavailable/Degraded; pull Advisor HighAvailability recommendations; optionally include Activity Log ResourceHealth events. Do NOT use \`az rest --method post\` or the Cost Management Query API — POST is blocked as a write.
+3. Read the skill's reliability.py into the sandbox and run analyze_cost_vs_reliability(line_items=..., alerts=..., health_events=..., advisor_recommendations=...) to get totals, coverage, per-resource rankings, per-service rollups, top drivers, hints, unmatched reliability, and data quality.
+4. BAKE the results directly into the HTML as static data (a JS constant / static DOM). Do NOT use window.sreagent.callTool anywhere — the report must render fully with no view-time tool calls. Call SaveReport with allowedTools set to an EMPTY list (so it saves with no connector-approval prompt).
+   - name: "${RELIABILITY_REPORT_NAME}"
+   - description: one sentence noting it is a weekly-refreshed snapshot comparing Azure spend and reliability pain from alerts, Resource Health, and Advisor, part of the FinOps pack, as of today's date.
+5. Content: a HEADLINE row (total monthly spend, resource count, reliability signal count, joined/unmatched coverage, and partial-cost warning if applicable); a Chart.js bar chart of the top resources by reliability score with monthly cost in the tooltip; a "Spend + pain" table (resource, service, monthly \$, alert/severity counts, health events, Advisor HA count, reliability score, pain per \$1K, risk band, primary signal); a service rollup; a "High pain / low spend" investment-candidates section; a "High spend / no pain — verify before cutting" section; and a data-quality section for unmatched or subscription-level signals and disclosed limitations. Single self-contained HTML file; follow the skill's CSP/nonce rules and copy the exact SRI library tags from the reference files. Light mode. Wrap every render block defensively with a small empty-state. Render a visible "Last refreshed: <UTC date-time> UTC" line in the report header — compute the current UTC timestamp in the sandbox at author time (e.g. Python datetime.now(timezone.utc)) and BAKE it in as static text so a viewer can always see how fresh the data is; note near it that Azure cost data settles ~daily and alerts are weighted counts, not a complete incident system.
+
+Read-only Azure only. Do not use any write/POST Azure operations. When done, confirm the saved report id and version number.
+EOF
+upsert_task "$RELIABILITY_REPORT_TASK_NAME" \
+  "Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub) comparing Azure spend with reliability pain from alerts, Resource Health, and Advisor HighAvailability; ranks resources/services, investment candidates, and verify-before-cutting candidates." \
+  "$RELIABILITY_REPORT_CRON" "$RELIABILITY_REPORT_PROMPT"
+
 # ---- 5. Verify --------------------------------------------------------------
 say "Verifying"
 api GET /api/v2/plugins/installations; resp="$RESP_BODY"
@@ -375,12 +401,14 @@ printf '%s' "$resp" | grep -qi "Rightsizing Savings"    && ok "weekly rightsizin
 printf '%s' "$resp" | grep -qi "Budget Status"          && ok "daily budget live-report task present" || warn "budget live-report task not visible"
 printf '%s' "$resp" | grep -qi "Cost Optimization"      && ok "weekly cost-optimization live-report task present" || warn "cost-optimization live-report task not visible"
 printf '%s' "$resp" | grep -qi "AI Spend"               && ok "weekly AI-spend live-report task present" || warn "AI-spend live-report task not visible"
+printf '%s' "$resp" | grep -qi "Cost vs Reliability"    && ok "weekly cost-vs-reliability live-report task present" || warn "cost-vs-reliability live-report task not visible"
 
 say "Done — FinOps pack installed via the agent API."
-printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-cost-allocation, finops-budget-governance, finops-budget-editor, finops-cost-optimization-report, finops-for-ai (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
-printf '  • Tasks  : "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s)\n' \
+printf '  • Package: 8 skills, 8 tasks, 6 Live Reports\n'
+printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-cost-allocation, finops-budget-governance, finops-budget-editor, finops-cost-optimization-report, finops-for-ai, finops-cost-vs-reliability (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
+printf '  • Tasks  : "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s)\n' \
   "$TASK_NAME" "$CRON" "$RIGHTSIZE_TASK_NAME" "$RIGHTSIZE_CRON" \
   "$REPORT_TASK_NAME" "$REPORT_CRON" "$RIGHTSIZE_REPORT_TASK_NAME" "$RIGHTSIZE_REPORT_CRON" \
   "$BUDGET_REPORT_TASK_NAME" "$BUDGET_REPORT_CRON" "$COST_OPT_TASK_NAME" "$COST_OPT_CRON" \
-  "$AI_REPORT_TASK_NAME" "$AI_REPORT_CRON"
-printf '  • Live Reports "%s", "%s", "%s", "%s", and "%s" appear in Operations Hub > Live Reports (requires Live Reports enabled on the agent).\n' "$REPORT_NAME" "$RIGHTSIZE_REPORT_NAME" "$BUDGET_REPORT_NAME" "$COST_OPT_NAME" "$AI_REPORT_NAME"
+  "$AI_REPORT_TASK_NAME" "$AI_REPORT_CRON" "$RELIABILITY_REPORT_TASK_NAME" "$RELIABILITY_REPORT_CRON"
+printf '  • Live Reports "%s", "%s", "%s", "%s", "%s", and "%s" appear in Operations Hub > Live Reports (requires Live Reports enabled on the agent).\n' "$REPORT_NAME" "$RIGHTSIZE_REPORT_NAME" "$BUDGET_REPORT_NAME" "$COST_OPT_NAME" "$AI_REPORT_NAME" "$RELIABILITY_REPORT_NAME"

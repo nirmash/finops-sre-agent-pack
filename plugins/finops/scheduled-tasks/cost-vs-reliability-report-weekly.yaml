@@ -1,0 +1,82 @@
+# Proactive weekly FinOps Cost vs Reliability Live Report refresh.
+#
+# Like the other report tasks, this drives the built-in `live_report_authoring` skill to
+# author/update a Live Report that appears in Operations Hub > Live Reports. It keeps ONE
+# report named "FinOps: Cost vs Reliability" and saves a new VERSION each week (a baked-in
+# snapshot, so it needs no view-time connectors and saves with no approval prompt).
+#
+# This is the cost-vs-reliability report: it joins UsageDetails cost to alerts (primary pain),
+# Resource Health, and Advisor HighAvailability signals using finops-cost-vs-reliability.
+# Read-only, no POST.
+#
+# Requires Live Reports enabled on the agent (first-party + Operations Hub).
+#
+# Applied by install.sh via `srectl scheduledtask apply --file`. The installer renders the
+# __PLACEHOLDER__ tokens from environment variables before applying. Apply is upsert-by-name.
+apiVersion: azuresre.ai/v1
+kind: ScheduledTask
+metadata:
+  name: "FinOps: Cost vs Reliability (Live Report, Weekly)"
+  owner: __ALERT_EMAIL__
+  tags:
+    - finops
+    - finops-live-report
+spec:
+  name: "FinOps: Cost vs Reliability (Live Report, Weekly)"
+  description: >-
+    Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub) comparing Azure
+    monthly spend with reliability pain from alerts, Resource Health, and Advisor HighAvailability;
+    ranks resources/services, investment candidates, and verify-before-cutting candidates.
+  agent: __AGENT_NAME__
+  cron: __RELIABILITY_REPORT_CRON__
+  modelTier: ReasoningHeavy
+  agentPrompt: |
+    Create or update a Live Report now using the `live_report_authoring` skill.
+    This is an explicit request to author and SAVE a Live Report — proceed without
+    asking any questions and do not defer it to chat.
+
+    Report: a FinOps cost-vs-reliability snapshot for Azure subscription __SUB_ID__.
+
+    Idempotent weekly refresh — keep ONE report and version it:
+    1. Call ListReports. If a report named exactly "FinOps: Cost vs Reliability" already
+       exists, call GetReport to check it out and reuse its reportId; pass that reportId
+       to SaveReport (saving a new VERSION). If it does not exist, omit reportId (create it).
+
+    This is a SNAPSHOT report, not a connector-backed live report:
+    2. Pull the data NOW using the read-only `finops-cost-vs-reliability` skill. Read its
+       SKILL.md and follow it: pull Consumption UsageDetails (ActualCost) with GET only;
+       pull Azure Monitor alerts via GET from Microsoft.AlertsManagement/alerts; pull
+       Resource Health availabilityStatuses via GET and keep Unavailable/Degraded; pull
+       Advisor HighAvailability recommendations; optionally include Activity Log ResourceHealth
+       events. Do NOT use `az rest --method post` or the Cost Management Query API — POST is
+       blocked as a write.
+    3. Read the skill's reliability.py into the sandbox and run
+       analyze_cost_vs_reliability(line_items=..., alerts=..., health_events=...,
+       advisor_recommendations=...) to get totals, coverage, per-resource rankings,
+       per-service rollups, top drivers, hints, unmatched reliability, and data quality.
+    4. BAKE the results directly into the HTML as static data (a JS constant / static DOM).
+       Do NOT use window.sreagent.callTool anywhere — the report must render fully with no
+       view-time tool calls. Call SaveReport with allowedTools set to an EMPTY list (so it
+       saves with no connector-approval prompt).
+       - name: "FinOps: Cost vs Reliability"
+       - description: one sentence noting it is a weekly-refreshed snapshot comparing Azure
+         spend and reliability pain from alerts, Resource Health, and Advisor, part of the
+         FinOps pack, as of today's date.
+    5. Content: a HEADLINE row (total monthly spend, resource count, reliability signal count,
+       joined/unmatched coverage, and partial-cost warning if applicable); a Chart.js bar chart
+       of the top resources by reliability score with monthly cost in the tooltip; a "Spend +
+       pain" table (resource, service, monthly $, alert/severity counts, health events, Advisor
+       HA count, reliability score, pain per $1K, risk band, primary signal); a service rollup;
+       a "High pain / low spend" investment-candidates section; a "High spend / no pain — verify
+       before cutting" section; and a data-quality section for unmatched or subscription-level
+       signals and disclosed limitations. Single self-contained HTML file; follow the skill's
+       CSP/nonce rules and copy the exact SRI library tags from the reference files. Light mode.
+       Wrap every render block defensively with a small empty-state. Render a visible "Last
+       refreshed: <UTC date-time> UTC" line in the report header — compute the current UTC
+       timestamp in the sandbox at author time (e.g. Python datetime.now(timezone.utc)) and BAKE
+       it in as static text so a viewer can always see how fresh the data is; note near it that
+       Azure cost data settles ~daily and alerts are weighted counts, not a complete incident
+       system.
+
+    Read-only Azure only. Do not use any write/POST Azure operations. When done, confirm the
+    saved report id and version number.

@@ -10,7 +10,7 @@ Structure mirrors [Azure/sre-agent-plugins](https://github.com/Azure/sre-agent-p
 > **Note:** These skills are designed for use with the Azure SRE Agent and may not work with other
 > coding agents.
 
-## Plugins
+## Included plugin
 
 | Plugin | Description |
 |--------|-------------|
@@ -18,8 +18,12 @@ Structure mirrors [Azure/sre-agent-plugins](https://github.com/Azure/sre-agent-p
 
 ## Install
 
-The supported installer uses the SRE Agent management API and requires `az`, `curl`, and `python3`.
-Sign in with `az login`, then run:
+The supported installer installs the complete **`finops` plugin package** from this repository: all
+eight skills, `finops-investigator`, eight scheduled tasks, and six Live Reports. It does not install
+unrelated plugins from the marketplace.
+
+The installer uses the SRE Agent management API and requires `az`, `curl`, and `python3`. Sign in
+with `az login`, then run:
 
 ```bash
 AGENT_RESOURCE_ID=/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.App/agents/<agent> \
@@ -39,10 +43,14 @@ set `MI_OBJECT_ID=<agent-mi-object-id>`. The installer adds no budget-write perm
 [FinOps plugin documentation](plugins/finops/README.md#install-everything-recommended) for all
 configuration options and installed components.
 
-## Adding plugins
+## Contributing another plugin
 
-1. Add the plugin directory under `plugins/`.
-2. Add an entry for the plugin in [`.github/plugin/marketplace.json`](.github/plugin/marketplace.json).
+This section is for repository contributors, not an additional installation step:
+
+1. Add the new plugin directory under `plugins/`.
+2. Add its marketplace entry to [`.github/plugin/marketplace.json`](.github/plugin/marketplace.json).
+3. Provide a plugin-specific installer or extend the package installer intentionally; the existing
+   `plugins/finops/install-api.sh` installs only the `finops` package.
 
 ## Design & requirements background
 

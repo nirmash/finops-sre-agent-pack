@@ -11,8 +11,8 @@
 #
 # Requires Live Reports enabled on the agent (first-party + Operations Hub).
 #
-# Applied by install.sh via `srectl scheduledtask apply --file`. The installer renders the
-# __PLACEHOLDER__ tokens from environment variables before applying. Apply is upsert-by-name.
+# Reference template for the task created by install-api.sh. API installation is
+# upsert-by-name, so re-running the installer is idempotent.
 apiVersion: azuresre.ai/v1
 kind: ScheduledTask
 metadata:

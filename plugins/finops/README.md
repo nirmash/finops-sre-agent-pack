@@ -109,7 +109,7 @@ This plugin ships as a **package**: one command installs the eight skills, the s
 Reports), and (optionally) the RBAC grant. The tasks are all prefixed **`FinOps:`** and target
 `finops-investigator` by default.
 
-### Option A — API installer (no srectl, recommended)
+### API installer
 
 [`install-api.sh`](install-api.sh) installs everything by calling the agent's own management API
 directly (the same control-plane `srectl` uses) — so it needs only `az` (logged in), `curl`, and
@@ -165,20 +165,6 @@ in place as usual.
 > Once this repo is public, drop `GITHUB_PAT` — the server clones it with the host's default GitHub
 > identity.
 
-### Option B — legacy srectl installer
-
-[`install.sh`](install.sh) applies the original anomaly/rightsizing skills and early scheduled tasks via
-`srectl` (skill apply + scheduledtask apply, upsert by name). Prefer Option A for the full eight-skill /
-eight-task pack. Point srectl at your agent first
-(`srectl init --resource-url <endpoint>`).
-
-```bash
-AGENT_NAME="My Agent" SUB_ID=<subscription-id> ./install.sh
-
-# Also perform the Cost Management Reader grant automatically:
-MI_OBJECT_ID=<agent-mi-object-id> AGENT_NAME="My Agent" SUB_ID=<sub> ./install.sh
-```
-
 What the API installer sets up:
 
 | Component | What / where |
@@ -205,10 +191,6 @@ What the API installer sets up:
 The agent is upserted separately from the plugin installation because the runtime plugin importer
 currently owns skills, not agent configurations. Uninstalling the plugin therefore does not delete
 `finops-investigator`; remove that separately only when intentionally decommissioning it.
-
-> `install.sh` uses `srectl`, which must be built from `Agent.Cli` in the `sreagent-runtime` repo
-> (requires the private Antares Azure DevOps NuGet feed and .NET SDK `10.0.301`). If you can't build
-> it, use Option A (`install-api.sh`) or the manual MCP path below.
 
 ## Proactive monitoring
 
@@ -257,7 +239,7 @@ settles roughly daily, so daily/weekly refresh matches the data's freshness.
 
 ## Install a skill only (manual)
 
-If you only want an individual skill (no scheduled task), use one of these instead of `install.sh`.
+If you only want an individual skill without installing the full package, use one of these methods.
 
 ### Option 1 — MCP `sre-agent-skills` tool (validated path)
 

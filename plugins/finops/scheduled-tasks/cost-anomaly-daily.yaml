@@ -1,8 +1,7 @@
 # Proactive daily cost-anomaly scan.
 #
-# Applied by install.sh via `srectl scheduledtask apply --file`. The installer
-# renders the __PLACEHOLDER__ tokens from environment variables before applying;
-# you can also copy this file, fill the tokens in by hand, and apply it directly.
+# Reference template for the task created by install-api.sh. The API installer
+# renders equivalent values from environment variables before upserting the task.
 #
 # Apply is upsert-by-name, so re-running is idempotent.
 apiVersion: azuresre.ai/v1

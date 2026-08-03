@@ -120,7 +120,7 @@ anomalies" line.
 ## Delivery modes
 
 - **Scheduled task (primary):** run daily/weekly; post the report only on a threshold crossing.
-- **Interactive:** the `finops-investigator` subagent calls this skill for "did anything spike and
+- **Interactive:** the installed `finops-investigator` agent calls this skill for "did anything spike and
   why?" drill-downs.
 - **Incident-time:** invoked during a reliability investigation to check whether an incident had a
   cost signature.

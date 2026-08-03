@@ -14,7 +14,7 @@ Structure mirrors [Azure/sre-agent-plugins](https://github.com/Azure/sre-agent-p
 
 | Plugin | Description |
 |--------|-------------|
-| [`finops`](plugins/finops/README.md) | **FinOps pack** — eight read-only FinOps skills (anomaly detection, rightsizing, cost allocation, budget governance/editor, executive optimization, AI spend attribution, and cost-vs-reliability) plus eight proactive scheduled tasks including six Live Reports, installable with one command via the agent API ([`plugins/finops/install-api.sh`](plugins/finops/install-api.sh), no srectl needed). |
+| [`finops`](plugins/finops/README.md) | **FinOps pack** — eight read-only FinOps skills, the standalone `finops-investigator` agent, and eight proactive scheduled tasks including six Live Reports, installable with one command via the agent API ([`plugins/finops/install-api.sh`](plugins/finops/install-api.sh), no srectl needed). |
 
 ## Adding plugins
 

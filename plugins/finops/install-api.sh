@@ -7,11 +7,12 @@
 #   * gets an AAD token for the SRE Agent first-party scope (https://azuresre.dev/.default)
 #   * calls the agent's data-plane endpoint (RBAC-guarded by AuthorizeArmOperation)
 #
-# It performs three control-plane operations:
+# It performs four control-plane operations:
 #   1. Register this repo as a plugin marketplace         POST /api/v2/plugins/marketplaces
 #   2. Install the `finops` plugin (server clones + copies POST .../plugins/finops/install
 #      the whole skill dir: SKILL.md + detect.py)
-#   3. Upsert the proactive FinOps scheduled tasks       POST/PUT /api/v1/scheduledtasks
+#   3. Upsert the read-only FinOps investigator agent    PUT /api/v2/extendedAgent/agents/...
+#   4. Upsert the proactive FinOps scheduled tasks       POST/PUT /api/v1/scheduledtasks
 #
 # Caller identity (az login) must hold the agent's ARM write actions
 # (AgentExtendedAgentWrite, AgentScheduledTaskWrite) — the resource owner does.
@@ -28,6 +29,8 @@
 #
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # ---- Configuration (override via environment) -------------------------------
 AGENT_RESOURCE_ID="${AGENT_RESOURCE_ID:-}"       # ARM id; endpoint is derived from it
 ENDPOINT="${ENDPOINT:-}"                          # or pass the data-plane URL directly
@@ -39,12 +42,18 @@ SKILL_NAME="${SKILL_NAME:-finops-cost-anomaly-detection}"
 REPO_SLUG="${REPO_SLUG:-nirmash/finops-sre-agent-pack}"   # owner/repo (marketplace sourceUrl)
 SOURCE_FORMAT="${SOURCE_FORMAT:-copilot}"
 GITHUB_PAT="${GITHUB_PAT:-}"                      # set for a private repo; else host-default identity
+FINOPS_AGENT_NAME="${FINOPS_AGENT_NAME:-finops-investigator}"
+FINOPS_AGENT_MANIFEST="${FINOPS_AGENT_MANIFEST:-$SCRIPT_DIR/agents/finops-investigator.json}"
+FINOPS_EXTRA_TOOLS="${FINOPS_EXTRA_TOOLS:-}"       # comma-separated registered tool names
+FINOPS_MCP_TOOLS="${FINOPS_MCP_TOOLS:-}"           # comma-separated connector/tool identifiers
+FINOPS_CONNECTORS="${FINOPS_CONNECTORS:-}"         # comma-separated connector names
 
 TASK_NAME="${TASK_NAME:-FinOps: Cost Anomaly Detection (Daily)}"
 RIGHTSIZE_TASK_NAME="${RIGHTSIZE_TASK_NAME:-FinOps: Rightsizing Review (Weekly)}"
 REPORT_TASK_NAME="${REPORT_TASK_NAME:-FinOps: Cost Overview (Live Report, Daily)}"
 RIGHTSIZE_REPORT_TASK_NAME="${RIGHTSIZE_REPORT_TASK_NAME:-FinOps: Rightsizing Savings (Live Report, Weekly)}"
-AGENT_NAME="${AGENT_NAME:-Nir Mashkowski}"
+AGENT_NAME="${AGENT_NAME:-}"                       # compatibility alias for TASK_AGENT_NAME
+TASK_AGENT_NAME="${TASK_AGENT_NAME:-${AGENT_NAME:-$FINOPS_AGENT_NAME}}"
 SUB_ID="${SUB_ID:-93cba93f-571e-44e9-ac0a-a2987b58848c}"
 CRON="${CRON:-0 14 * * *}"                         # daily anomaly scan (14:00 UTC)
 RIGHTSIZE_CRON="${RIGHTSIZE_CRON:-0 15 * * 1}"     # weekly rightsizing review (Mon 15:00 UTC)
@@ -79,6 +88,10 @@ command -v az     >/dev/null 2>&1 || die "az (Azure CLI) not found."
 command -v curl   >/dev/null 2>&1 || die "curl not found."
 command -v python3 >/dev/null 2>&1 || die "python3 not found."
 az account show >/dev/null 2>&1 || die "Not logged in to Azure. Run 'az login' first."
+[ -f "$FINOPS_AGENT_MANIFEST" ] || die "Agent manifest not found: $FINOPS_AGENT_MANIFEST"
+case "$FINOPS_AGENT_NAME" in
+  *[!A-Za-z0-9._-]*|'') die "FINOPS_AGENT_NAME must contain only letters, numbers, dot, underscore, or hyphen.";;
+esac
 
 if [ -z "$ENDPOINT" ]; then
   [ -n "$AGENT_RESOURCE_ID" ] || die "Set ENDPOINT or AGENT_RESOURCE_ID."
@@ -125,7 +138,7 @@ fi
 
 # ---- 2. Register the marketplace -------------------------------------------
 say "Registering marketplace '$MARKETPLACE_NAME' -> $REPO_SLUG"
-mk_body="$(mktemp)"; trap 'rm -f "$mk_body" "${task_body:-}"' EXIT
+mk_body="$(mktemp)"; trap 'rm -f "$mk_body" "${task_body:-}" "${agent_body:-}"' EXIT
 MARKETPLACE_NAME="$MARKETPLACE_NAME" REPO_SLUG="$REPO_SLUG" SOURCE_FORMAT="$SOURCE_FORMAT" \
 GITHUB_PAT="$GITHUB_PAT" python3 - "$mk_body" <<'PY'
 import json, os, sys
@@ -170,7 +183,109 @@ case "$HTTP_CODE" in
   *) die "Plugin install failed (HTTP $HTTP_CODE): $resp";;
 esac
 
-# ---- 4. Upsert the scheduled tasks -----------------------------------------
+say "Waiting for all FinOps skills"
+for i in $(seq 1 60); do
+  api GET /api/v2/plugins/installations
+  if printf '%s' "$RESP_BODY" | MARKETPLACE_NAME="$MARKETPLACE_NAME" PLUGIN_NAME="$PLUGIN_NAME" python3 -c '
+import json, os, sys
+expected = {
+    "finops-cost-anomaly-detection",
+    "finops-rightsizing-advisor",
+    "finops-cost-allocation",
+    "finops-budget-governance",
+    "finops-budget-editor",
+    "finops-cost-optimization-report",
+    "finops-for-ai",
+    "finops-cost-vs-reliability",
+}
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+installations = data if isinstance(data, list) else data.get("value", [])
+for item in installations:
+    spec = item.get("spec", {})
+    if (
+        spec.get("marketplaceName") == os.environ["MARKETPLACE_NAME"]
+        and spec.get("pluginName") == os.environ["PLUGIN_NAME"]
+    ):
+        imported = {skill.get("skillName") for skill in spec.get("importedSkills", [])}
+        raise SystemExit(0 if expected <= imported else 1)
+raise SystemExit(1)
+'; then
+    ok "All eight FinOps skills ready"
+    break
+  fi
+  printf '  … skills not ready (%d/60)\n' "$i"
+  sleep 2
+  [ "$i" -eq 60 ] && die "Timed out waiting for all eight FinOps skills."
+done
+
+# ---- 4. Upsert the FinOps investigator agent -------------------------------
+say "Validating agent '$FINOPS_AGENT_NAME'"
+agent_body="$(mktemp)"
+FINOPS_AGENT_NAME="$FINOPS_AGENT_NAME" \
+FINOPS_AGENT_MANIFEST="$FINOPS_AGENT_MANIFEST" \
+FINOPS_EXTRA_TOOLS="$FINOPS_EXTRA_TOOLS" \
+FINOPS_MCP_TOOLS="$FINOPS_MCP_TOOLS" \
+FINOPS_CONNECTORS="$FINOPS_CONNECTORS" \
+python3 - "$agent_body" <<'PY'
+import json
+import os
+import sys
+
+
+def csv_values(name):
+    return [value.strip() for value in os.environ.get(name, "").split(",") if value.strip()]
+
+
+def append_unique(existing, additions):
+    result = list(existing or [])
+    for value in additions:
+        if value not in result:
+            result.append(value)
+    return result
+
+
+with open(os.environ["FINOPS_AGENT_MANIFEST"]) as handle:
+    doc = json.load(handle)
+
+doc["name"] = os.environ["FINOPS_AGENT_NAME"]
+properties = doc.setdefault("properties", {})
+properties["tools"] = append_unique(properties.get("tools"), csv_values("FINOPS_EXTRA_TOOLS"))
+properties["mcpTools"] = append_unique(properties.get("mcpTools"), csv_values("FINOPS_MCP_TOOLS"))
+properties["connectors"] = append_unique(properties.get("connectors"), csv_values("FINOPS_CONNECTORS"))
+
+with open(sys.argv[1], "w") as handle:
+    json.dump(doc, handle)
+PY
+
+api PUT "/api/v2/extendedAgent/agents/${FINOPS_AGENT_NAME}?dryRun=true" "$agent_body"
+case "$HTTP_CODE" in
+  200|201|202|204) ok "Agent definition validated";;
+  *) die "Agent validation failed (HTTP $HTTP_CODE): $RESP_BODY";;
+esac
+
+say "Upserting agent '$FINOPS_AGENT_NAME'"
+api PUT "/api/v2/extendedAgent/agents/${FINOPS_AGENT_NAME}" "$agent_body"
+case "$HTTP_CODE" in
+  200|201|202|204) ok "Agent upserted";;
+  *) die "Agent upsert failed (HTTP $HTTP_CODE): $RESP_BODY";;
+esac
+rm -f "$agent_body"
+
+say "Waiting for agent registration"
+for i in $(seq 1 30); do
+  api GET "/api/v2/extendedAgent/agents/${FINOPS_AGENT_NAME}"
+  case "$HTTP_CODE" in
+    200) ok "Agent ready"; break;;
+    202|404) printf '  … agent not ready (%d/30)\n' "$i"; sleep 2;;
+    *) die "Agent readiness check failed (HTTP $HTTP_CODE): $RESP_BODY";;
+  esac
+  [ "$i" -eq 30 ] && die "Timed out waiting for agent '$FINOPS_AGENT_NAME' to become ready."
+done
+
+# ---- 5. Upsert the scheduled tasks -----------------------------------------
 # upsert_task NAME DESCRIPTION CRON PROMPT — POST new / PUT existing by name.
 upsert_task() {
   local name="$1" description="$2" cron="$3" prompt="$4"
@@ -186,7 +301,7 @@ tasks=data if isinstance(data,list) else data.get("value",[])
 print(next((t.get("id","") for t in tasks if t.get("name")==name), ""))' 2>/dev/null || true)"
 
   local body; body="$(mktemp)"
-  TASK_NAME="$name" TASK_DESC="$description" CRON="$cron" AGENT_NAME="$AGENT_NAME" PROMPT="$prompt" \
+  TASK_NAME="$name" TASK_DESC="$description" CRON="$cron" TASK_AGENT_NAME="$TASK_AGENT_NAME" PROMPT="$prompt" \
     python3 - "$body" <<'PY'
 import json, os, sys
 doc = {
@@ -194,7 +309,7 @@ doc = {
     "description": os.environ["TASK_DESC"],
     "cronExpression": os.environ["CRON"],
     "agentPrompt": os.environ["PROMPT"],
-    "agent": os.environ["AGENT_NAME"],
+    "agent": os.environ["TASK_AGENT_NAME"],
     "agentMode": "autonomous",
 }
 open(sys.argv[1], "w").write(json.dumps(doc))
@@ -389,23 +504,50 @@ upsert_task "$RELIABILITY_REPORT_TASK_NAME" \
   "Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub) comparing Azure spend with reliability pain from alerts, Resource Health, and Advisor HighAvailability; ranks resources/services, investment candidates, and verify-before-cutting candidates." \
   "$RELIABILITY_REPORT_CRON" "$RELIABILITY_REPORT_PROMPT"
 
-# ---- 5. Verify --------------------------------------------------------------
+# ---- 6. Verify --------------------------------------------------------------
 say "Verifying"
 api GET /api/v2/plugins/installations; resp="$RESP_BODY"
 printf '%s' "$resp" | grep -qi "$PLUGIN_NAME" && ok "plugin installation present" || warn "plugin not visible yet (install may still be finishing)"
+api GET "/api/v2/extendedAgent/agents/${FINOPS_AGENT_NAME}"; resp="$RESP_BODY"
+case "$HTTP_CODE" in
+  200) printf '%s' "$resp" | grep -qi "\"name\"[[:space:]]*:[[:space:]]*\"${FINOPS_AGENT_NAME}\"" \
+         && ok "agent present: $FINOPS_AGENT_NAME" || warn "agent response did not contain expected name";;
+  *) warn "agent not visible (HTTP $HTTP_CODE)";;
+esac
 api GET /api/v1/scheduledtasks; resp="$RESP_BODY"
-printf '%s' "$resp" | grep -qi "Cost Anomaly Detection" && ok "daily anomaly task present"   || warn "anomaly task not visible"
-printf '%s' "$resp" | grep -qi "Rightsizing Review"     && ok "weekly rightsizing task present" || warn "rightsizing task not visible"
-printf '%s' "$resp" | grep -qi "Cost Overview"          && ok "daily live-report task present"  || warn "live-report task not visible"
-printf '%s' "$resp" | grep -qi "Rightsizing Savings"    && ok "weekly rightsizing live-report task present" || warn "rightsizing live-report task not visible"
-printf '%s' "$resp" | grep -qi "Budget Status"          && ok "daily budget live-report task present" || warn "budget live-report task not visible"
-printf '%s' "$resp" | grep -qi "Cost Optimization"      && ok "weekly cost-optimization live-report task present" || warn "cost-optimization live-report task not visible"
-printf '%s' "$resp" | grep -qi "AI Spend"               && ok "weekly AI-spend live-report task present" || warn "AI-spend live-report task not visible"
-printf '%s' "$resp" | grep -qi "Cost vs Reliability"    && ok "weekly cost-vs-reliability live-report task present" || warn "cost-vs-reliability live-report task not visible"
+verify_task_agent() {
+  local name="$1"
+  if printf '%s' "$resp" | TASK_NAME="$name" TASK_AGENT_NAME="$TASK_AGENT_NAME" python3 -c '
+import json, os, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+tasks = data if isinstance(data, list) else data.get("value", [])
+raise SystemExit(0 if any(
+    task.get("name") == os.environ["TASK_NAME"]
+    and task.get("agent") == os.environ["TASK_AGENT_NAME"]
+    for task in tasks
+) else 1)
+'; then
+    ok "task present on $TASK_AGENT_NAME: $name"
+  else
+    warn "task missing or targets another agent: $name"
+  fi
+}
+verify_task_agent "$TASK_NAME"
+verify_task_agent "$RIGHTSIZE_TASK_NAME"
+verify_task_agent "$REPORT_TASK_NAME"
+verify_task_agent "$RIGHTSIZE_REPORT_TASK_NAME"
+verify_task_agent "$BUDGET_REPORT_TASK_NAME"
+verify_task_agent "$COST_OPT_TASK_NAME"
+verify_task_agent "$AI_REPORT_TASK_NAME"
+verify_task_agent "$RELIABILITY_REPORT_TASK_NAME"
 
 say "Done — FinOps pack installed via the agent API."
-printf '  • Package: 8 skills, 8 tasks, 6 Live Reports\n'
+printf '  • Package: 8 skills, 1 agent, 8 tasks, 6 Live Reports\n'
 printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-cost-allocation, finops-budget-governance, finops-budget-editor, finops-cost-optimization-report, finops-for-ai, finops-cost-vs-reliability (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
+printf '  • Agent  : "%s" (standalone, autonomous, read-only; task target: "%s")\n' "$FINOPS_AGENT_NAME" "$TASK_AGENT_NAME"
 printf '  • Tasks  : "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s)\n' \
   "$TASK_NAME" "$CRON" "$RIGHTSIZE_TASK_NAME" "$RIGHTSIZE_CRON" \
   "$REPORT_TASK_NAME" "$REPORT_CRON" "$RIGHTSIZE_REPORT_TASK_NAME" "$RIGHTSIZE_REPORT_CRON" \

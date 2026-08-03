@@ -1,6 +1,6 @@
 # FinOps Plugin
 
-FinOps skills for Azure SRE Agent, delivered entirely as **skills + agents + scheduled tasks** —
+FinOps capabilities for Azure SRE Agent, delivered as **eight skills + one agent + eight scheduled tasks** —
 no changes to the SRE Agent product. Skills compose existing read-only Azure tools
 (`RunAzCliReadCommands`, Resource Graph, Azure Monitor), the GitHub connector, and in-sandbox
 Python (`ExecutePythonCode`).
@@ -30,6 +30,18 @@ skill:
 | **Make repo public** | Flip the repo to public and drop the install PAT once the pack is ready to share. | 🔜 planned |
 
 Engineering wave order is complete: Wave 1 anomaly + rightsizing, Wave 2 allocation + budgets, Wave 3 executive/AI reports, and Wave 4 `finops-cost-vs-reliability` + Live Report are now built.
+
+## Agent
+
+The API installer also creates **`finops-investigator`**, a standalone autonomous agent configured
+with the eight FinOps skills, the built-in Live Report authoring skill, and an explicit read-only
+tool set. It is the default execution target for all eight scheduled tasks and can also be selected
+directly for interactive FinOps investigations. Existing agents are not modified.
+
+GitHub correlation and email delivery depend on connector tools already configured on the target
+SRE Agent. Attach them during installation with `FINOPS_MCP_TOOLS` (comma-separated MCP tool
+identifiers) and, when required, `FINOPS_CONNECTORS`. The investigator continues with Azure evidence
+and reports the limitation when an optional connector is unavailable.
 
 ### Design note — AI resource taxonomy for `finops-for-ai` (#2)
 
@@ -77,10 +89,10 @@ required** — line items are aggregated / detected client-side in the sandbox. 
 
 ## Install everything (recommended)
 
-This plugin ships as a **package**: one command installs the skills, the eight proactive scheduled
-tasks (two email reviews + six Live Reports), and (optionally) the RBAC grant. The tasks are all
-prefixed **`FinOps:`** so it's clear in the agent's Scheduled Tasks list that they belong to the
-FinOps pack and were installed alongside the skills.
+This plugin ships as a **package**: one command installs the eight skills, the standalone
+`finops-investigator` agent, the eight proactive scheduled tasks (two email reviews + six Live
+Reports), and (optionally) the RBAC grant. The tasks are all prefixed **`FinOps:`** and target
+`finops-investigator` by default.
 
 ### Option A — API installer (no srectl, recommended)
 
@@ -88,8 +100,8 @@ FinOps pack and were installed alongside the skills.
 directly (the same control-plane `srectl` uses) — so it needs only `az` (logged in), `curl`, and
 `python3`. No .NET build, no private NuGet feed. It (1) registers this repo as a plugin marketplace,
 (2) installs the `finops` plugin (the server clones the repo and imports all skill dirs —
-`SKILL.md` plus each bundled pure-Python core), and (3) upserts the daily and weekly scheduled tasks.
-Re-running is safe.
+`SKILL.md` plus each bundled pure-Python core), (3) dry-run validates and upserts
+`finops-investigator`, and (4) upserts the daily and weekly scheduled tasks. Re-running is safe.
 
 ```bash
 # Your az-login identity must own ARM write on the agent (the resource owner does).
@@ -105,7 +117,9 @@ MI_OBJECT_ID=<agent-mi-object-id> AGENT_RESOURCE_ID=<id> ./install-api.sh
 
 Configuration (all optional, shown with defaults): `AGENT_RESOURCE_ID`/`ENDPOINT`,
 `MARKETPLACE_NAME=finops-pack`, `PLUGIN_NAME=finops`, `REPO_SLUG=nirmash/finops-sre-agent-pack`,
-`GITHUB_PAT`, `TASK_NAME`, `CRON="0 14 * * *"` (daily 14:00 UTC), `RIGHTSIZE_TASK_NAME`,
+`GITHUB_PAT`, `FINOPS_AGENT_NAME=finops-investigator`, `TASK_AGENT_NAME=finops-investigator`,
+`FINOPS_EXTRA_TOOLS`, `FINOPS_MCP_TOOLS`, `FINOPS_CONNECTORS`, `TASK_NAME`,
+`CRON="0 14 * * *"` (daily 14:00 UTC), `RIGHTSIZE_TASK_NAME`,
 `RIGHTSIZE_CRON="0 15 * * 1"` (Mon 15:00 UTC), `REPORT_TASK_NAME`, `REPORT_CRON="0 14 * * *"`
 (daily Cost Overview Live Report), `RIGHTSIZE_REPORT_TASK_NAME`, `RIGHTSIZE_REPORT_CRON="0 15 * * 1"`
 (weekly Rightsizing Savings Live Report), `BUDGET_REPORT_TASK_NAME`, `BUDGET_REPORT_CRON="0 16 * * *"`
@@ -113,8 +127,12 @@ Configuration (all optional, shown with defaults): `AGENT_RESOURCE_ID`/`ENDPOINT
 (weekly Cost Optimization Live Report), `AI_REPORT_TASK_NAME`, `AI_REPORT_CRON="0 18 * * 1"`
 (weekly AI Spend Live Report), `RELIABILITY_REPORT_TASK_NAME`, `RELIABILITY_REPORT_CRON="0 19 * * 1"`
 (weekly Cost vs Reliability Live Report), `RELIABILITY_REPORT_NAME="FinOps: Cost vs Reliability"`,
-`AGENT_NAME`, `SUB_ID`, `ALERT_EMAIL`, `GITHUB_REPO`,
+`AGENT_NAME` (legacy alias for `TASK_AGENT_NAME`), `SUB_ID`, `ALERT_EMAIL`, `GITHUB_REPO`,
 `MI_OBJECT_ID`.
+
+`FINOPS_EXTRA_TOOLS`, `FINOPS_MCP_TOOLS`, and `FINOPS_CONNECTORS` accept comma-separated names and
+are appended to the investigator's strict default configuration. Invalid names fail the agent
+dry-run instead of silently falling back to another agent.
 
 > Once this repo is public, drop `GITHUB_PAT` — the server clones it with the host's default GitHub
 > identity.
@@ -137,8 +155,14 @@ What the API installer sets up:
 
 | Component | What / where |
 |-----------|--------------|
+| **Agent** `finops-investigator` | standalone autonomous FinOps agent from [`agents/finops-investigator.json`](agents/finops-investigator.json); read-only core tools, explicit skill allowlist, and the default target for all bundled tasks |
 | **Skill** `finops-cost-anomaly-detection` | the whole skill dir `skills/finops-cost-anomaly-detection/` (SKILL.md + `detect.py`) |
 | **Skill** `finops-rightsizing-advisor` | the whole skill dir `skills/finops-rightsizing-advisor/` (SKILL.md + `rightsize.py`) |
+| **Skill** `finops-cost-allocation` | the whole skill dir `skills/finops-cost-allocation/` (SKILL.md + `allocate.py`) |
+| **Skill** `finops-budget-governance` | the whole skill dir `skills/finops-budget-governance/` (SKILL.md + `budget.py`) |
+| **Skill** `finops-budget-editor` | the whole skill dir `skills/finops-budget-editor/` (SKILL.md + `recommend.py`); advisory and read-only, it prints a PUT command but never executes it |
+| **Skill** `finops-cost-optimization-report` | the whole skill dir `skills/finops-cost-optimization-report/` (SKILL.md + `summarize.py`) |
+| **Skill** `finops-for-ai` | the whole skill dir `skills/finops-for-ai/` (SKILL.md + `attribute.py`) |
 | **Skill** `finops-cost-vs-reliability` | the whole skill dir `skills/finops-cost-vs-reliability/` (SKILL.md + `reliability.py`) |
 | **Scheduled task** `FinOps: Cost Anomaly Detection (Daily)` | daily scan from [`scheduled-tasks/cost-anomaly-daily.yaml`](scheduled-tasks/cost-anomaly-daily.yaml) — alerts only on a spike |
 | **Scheduled task** `FinOps: Rightsizing Review (Weekly)` | weekly review from [`scheduled-tasks/rightsizing-weekly.yaml`](scheduled-tasks/rightsizing-weekly.yaml) — ranked savings opportunities |
@@ -149,6 +173,10 @@ What the API installer sets up:
 | **Live Report** `FinOps: AI Spend` (weekly) | driven by [`scheduled-tasks/ai-spend-report-weekly.yaml`](scheduled-tasks/ai-spend-report-weekly.yaml) — an Azure AI cost dashboard (total AI spend, per-model + per-resource breakdowns, token-vs-compute split, top drivers, and read-only hints from `finops-for-ai`; covers Azure OpenAI + AI Foundry + ML) in Operations Hub, re-versioned weekly |
 | **Live Report** `FinOps: Cost vs Reliability` (weekly) | driven by [`scheduled-tasks/cost-vs-reliability-report-weekly.yaml`](scheduled-tasks/cost-vs-reliability-report-weekly.yaml) — a cost-vs-reliability dashboard (spend + pain table, service rollup, HA investment candidates, verify-before-cutting candidates, and data-quality notes from `finops-cost-vs-reliability`) in Operations Hub, re-versioned weekly |
 | **RBAC** (optional) | Cost Management Reader on the agent MI when `MI_OBJECT_ID` is set |
+
+The agent is upserted separately from the plugin installation because the runtime plugin importer
+currently owns skills, not agent configurations. Uninstalling the plugin therefore does not delete
+`finops-investigator`; remove that separately only when intentionally decommissioning it.
 
 > `install.sh` uses `srectl`, which must be built from `Agent.Cli` in the `sreagent-runtime` repo
 > (requires the private Antares Azure DevOps NuGet feed and .NET SDK `10.0.301`). If you can't build
@@ -196,12 +224,12 @@ the task's cron (daily / weekly) rather than on every view. Azure cost data (`Us
 settles roughly daily, so daily/weekly refresh matches the data's freshness.
 
 > **Requires Live Reports enabled on the agent** (first-party + Operations Hub; feature flag
-> `EnableLiveReports`). Where it isn't enabled the three report tasks install but no-op at run time; the
-> two email tasks and both skills are unaffected.
+> `EnableLiveReports`). Where it isn't enabled the six report tasks install but no-op at run time; the
+> two email tasks and all eight skills are unaffected.
 
-## Install the skill only (manual)
+## Install a skill only (manual)
 
-If you only want the skill (no scheduled task), use one of these instead of `install.sh`.
+If you only want an individual skill (no scheduled task), use one of these instead of `install.sh`.
 
 ### Option 1 — MCP `sre-agent-skills` tool (validated path)
 

@@ -4,6 +4,10 @@ Run from the repository root. The explicit `today` keeps this example
 deterministic; production callers may let the function select the latest complete
 day.
 
+The resource ID below is offline fixture data. A live run retrieves and filters UsageDetails for
+the dynamically discovered managed scopes before calling this helper, then reports included,
+excluded, and unattributed cost coverage.
+
 ```python
 import importlib.util
 from datetime import date, timedelta

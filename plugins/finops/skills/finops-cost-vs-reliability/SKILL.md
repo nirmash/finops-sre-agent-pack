@@ -35,6 +35,26 @@ KQL/SLO/error-budget math, metric rates, and causal analysis are deferred to v2.
 
 ## Procedure
 
+### Step 0 — Resolve the managed boundary
+
+First load `finops-managed-scope` and follow its `scope.py` procedure to dynamically GET and validate
+the current agent `managedResources`; never reuse cached scope. Managed scopes and expanded descendants
+are the default boundary. Scheduled runs are strict/fail-closed with no override. An interactive named
+outside-scope target requires disclosure and explicit confirmation in a subsequent turn before any
+broader query. Broad RBAC never silently expands scope.
+
+Pull UsageDetails independently for every effective scope where supported, paginate each independently,
+de-duplicate overlaps, and boundary-filter resource ids while preserving unattributed cost separately.
+Pull Alerts Management, Resource Health, Advisor, and optional Activity Log once per effective
+scope/subscription; retain only in-bound resource signals, while separately counting legitimate
+scope-level signals. Report included scopes, excluded/unmatched/unattributed data, unsupported scopes,
+and partial/failed coverage.
+
+Advisor must be run once per unique effective subscription with `--subscription`. If the subscription
+is represented only by RG-level managed scopes, run once per unique effective RG with
+`--resource-group`, then client-side filter normalized resource ids to that exact RG ARM prefix.
+De-duplicate recommendations from overlapping scopes.
+
 ### Step 1 — Pull monthly cost line items (UsageDetails GET only)
 
 Use the same hardened Consumption UsageDetails pull as the other FinOps skills: request the complete
@@ -87,7 +107,20 @@ If `targetResourceId` is absent, the bundled core can strip the
 Advisor is a secondary reliability signal. Pull only HighAvailability recommendations:
 
 ```bash
-az advisor recommendation list --category HighAvailability -o json
+az advisor recommendation list \
+  --subscription <EFFECTIVE_SUBSCRIPTION_ID> \
+  --category HighAvailability \
+  -o json
+```
+
+For an RG-only managed scope:
+
+```bash
+az advisor recommendation list \
+  --subscription <EFFECTIVE_SUBSCRIPTION_ID> \
+  --resource-group <EFFECTIVE_RESOURCE_GROUP> \
+  --category HighAvailability \
+  -o json
 ```
 
 Flatten each recommendation to `{resourceId, category, problem, recommendation, lastUpdated}` where

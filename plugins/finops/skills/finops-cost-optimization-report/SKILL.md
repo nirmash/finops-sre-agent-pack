@@ -36,6 +36,20 @@ ships. Cross-currency portfolios are out of scope until needed.
 
 ## Procedure
 
+### Step 0 — Resolve the managed boundary
+
+First load `finops-managed-scope` and follow its `scope.py` procedure to dynamically GET and validate
+the current agent `managedResources`; never reuse cached scope. Pass one immutable effective-scope set
+for this request to every underlying skill. Scheduled runs are strict/fail-closed with no override.
+An interactive named outside-scope target requires disclosure and explicit confirmation in a
+subsequent turn before any broader query. Broad RBAC never silently expands scope.
+
+For each effective scope or expanded descendant, every underlying analysis must query and enforce its own
+defense-in-depth filtering. Shared UsageDetails may be reused only when it was independently paginated
+per effective scope, de-duplicated, boundary-filtered, and annotated with per-scope completeness.
+The report must disclose included scopes, excluded/unattributed data, unsupported scopes, and partial
+coverage alongside the existing analysis caveats.
+
 ### Step 1 — Run the four underlying analyses (read-only)
 
 Run each existing skill and keep its structured output. Follow each skill's own SKILL.md for the data

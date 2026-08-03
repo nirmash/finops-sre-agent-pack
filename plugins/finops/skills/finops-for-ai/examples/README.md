@@ -3,6 +3,10 @@
 Run from the repository root. Foundry `AIServices` resources remain included because
 classification uses `consumedService`, not the optional kind label.
 
+The resource IDs below are offline fixture data. A live run retrieves UsageDetails independently
+for every dynamically discovered managed scope, de-duplicates and filters the rows, and reports
+included, excluded, and unattributed cost coverage.
+
 ```python
 import importlib.util
 from pathlib import Path

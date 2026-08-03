@@ -32,11 +32,33 @@ spec:
   cron: __BUDGET_REPORT_CRON__
   modelTier: ReasoningHeavy
   agentPrompt: |
+    STRICT MANAGED-SCOPE PREAMBLE — complete this before any Azure analysis query,
+    email, ListReports/GetReport call, or SaveReport call:
+    0. Load `finops-managed-scope` and follow its `scope.py` procedure using agent
+       resource ID `__AGENT_RESOURCE_ID__`. Dynamically GET the agent's current
+       `managedResources`; do not use a cached list. Validate and normalize every
+       scope, expand only to Azure descendants, and use that effective scope set as
+       the sole analysis boundary.
+       - If discovery fails, is malformed, or returns an empty list, FAIL CLOSED:
+         stop without querying analysis data, sending email, or creating/updating/
+         saving a report. State the scope error only.
+       - This scheduled task accepts NO override or broader user/requested scope.
+         Broad RBAC/visibility must never expand the boundary.
+       - Query each effective scope independently where the API supports scoped
+         retrieval; paginate each independently, de-duplicate overlaps, filter all
+         results against the boundary, and disclose included, excluded, unattributed,
+         unsupported, and partial/failed scope coverage.
+       - Budget-specific query targets are the case-insensitive canonical union of
+         (a) every management-group scope configured directly in `managedResources`
+         and (b) expanded descendant effective scopes that support the Budgets API.
+         De-duplicate before querying and query each target exactly once. Do not query
+         a discovered descendant management group directly unless it is configured.
+
     Create or update a Live Report now using the `live_report_authoring` skill.
     This is an explicit request to author and SAVE a Live Report — proceed without
     asking any questions and do not defer it to chat.
 
-    Report: a FinOps budget-governance snapshot for Azure subscription __SUB_ID__.
+    Report: a FinOps budget-governance snapshot for the current managed Azure scopes.
 
     Idempotent daily refresh — keep ONE report and version it:
     1. Call ListReports. If a report named exactly "FinOps: Budget Status" already
@@ -46,8 +68,12 @@ spec:
 
     This is a SNAPSHOT report, not a connector-backed live report:
     2. Pull the data NOW using the read-only `finops-budget-governance` skill. Read
-       its SKILL.md and follow it: GET the native Azure budgets with
-       `az rest --method get --url "https://management.azure.com/subscriptions/__SUB_ID__/providers/Microsoft.Consumption/budgets?api-version=2023-05-01"`.
+       its SKILL.md and follow it. Directly GET the native budget collection for
+       every configured management-group scope with
+       `https://management.azure.com/providers/Microsoft.Management/managementGroups/{management-group-id}/providers/Microsoft.Consumption/budgets?api-version=2023-05-01`,
+       in addition to GETting budgets for the de-duplicated expanded descendant
+       effective scopes. Preserve source scope on every budget and never substitute
+       descendant subscription budgets for management-group-level budgets.
        Do NOT use `az rest --method post` or the Cost Management Query API — POST is
        blocked as a write. Do NOT do a UsageDetails cost pull — budget status comes
        from the budgets GET only. If the budgets list is empty, author the report

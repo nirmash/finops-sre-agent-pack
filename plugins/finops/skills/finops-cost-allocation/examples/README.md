@@ -2,6 +2,10 @@
 
 Run from the repository root. Resource IDs are matched case-insensitively.
 
+These resource IDs are offline fixture data. Live UsageDetails rows are retrieved per dynamically
+discovered managed scope, de-duplicated, and filtered before allocation; the final report also
+discloses included, excluded, and unattributed cost coverage.
+
 ```python
 import importlib.util
 from pathlib import Path

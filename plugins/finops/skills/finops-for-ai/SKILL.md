@@ -45,6 +45,22 @@ resource is flagged to **verify**, not asserted idle.
 
 ## Procedure
 
+### Step 0 — Resolve the managed boundary
+
+First load `finops-managed-scope` and follow its `scope.py` procedure to dynamically GET and validate
+the current agent `managedResources`; never use cached scope. Managed scopes and their expanded
+descendants are the default boundary. Scheduled runs are strict/fail-closed with no override. An
+interactive named resource outside the boundary requires disclosure and explicit confirmation in a
+subsequent turn before any broader query. Broad RBAC never expands scope implicitly.
+
+Pull UsageDetails independently for each effective scope where supported, with separate pagination
+state and completeness tracking. De-duplicate overlapping line items, then filter resource ids and
+attributable scope fields against the expanded boundary before AI classification. Run Resource Graph
+once per unique effective subscription with `--subscriptions`; for RG-only managed scopes, use the
+exact case-insensitive resource-group predicate and client-side ARM-prefix filter below. De-duplicate
+overlapping results and retain only in-bound ids. Report included scopes, excluded rows,
+unattributed AI cost, unsupported scopes, and partial/failed scope coverage.
+
 ### Step 1 — Pull AI cost line items
 
 Use the **same hardened Consumption UsageDetails pull as `finops-cost-anomaly-detection` Step 1**
@@ -72,8 +88,19 @@ final fallback; label totals "partial" if the pull cannot complete). Two differe
 Only to label each resource OpenAI vs AIServices vs the ML kind in the report:
 
 ```bash
-az graph query -q "Resources | where type =~ 'microsoft.cognitiveservices/accounts' or type startswith 'microsoft.machinelearningservices/' | project id, kind" --first 1000 -o json
+az graph query \
+  --subscriptions <EFFECTIVE_SUBSCRIPTION_ID> \
+  -q "Resources | where type =~ 'microsoft.cognitiveservices/accounts' or type startswith 'microsoft.machinelearningservices/' | project id, kind" \
+  --first 1000 \
+  -o json
 ```
+
+For an RG-only managed scope, add
+`| where resourceGroup =~ '<EFFECTIVE_RESOURCE_GROUP>'` before `project`, retaining the explicit
+`--subscriptions` value. Also keep only ids whose normalized ARM prefix is exactly
+`/subscriptions/<effective_subscription_id>/resourcegroups/<effective_resource_group>/`.
+Retain the same subscription constraint, RG predicate, and client-side filter on every paginated
+Resource Graph request.
 
 Flatten to `{resourceId: kind}`. Omit this step and the report just leaves the kind label blank —
 the attribution is identical either way.

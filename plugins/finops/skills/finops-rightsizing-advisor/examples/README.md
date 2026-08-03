@@ -3,6 +3,10 @@
 Run from the repository root. Utilization, cost, inventory, activity, and Advisor
 records are joined by case-insensitive resource ID.
 
+The resource ID below is offline fixture data. Live sources are queried separately for every
+dynamically discovered managed scope; UsageDetails rows are de-duplicated and filtered before this
+helper runs, with included, excluded, and unattributed cost coverage reported.
+
 ```python
 import importlib.util
 from pathlib import Path

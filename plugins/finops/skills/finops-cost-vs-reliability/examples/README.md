@@ -3,6 +3,10 @@
 Run from the repository root. Inputs are flattened results from read-only cost and
 reliability APIs.
 
+The resource ID below is offline fixture data. Live cost and reliability inputs are queried per
+dynamically discovered managed scope, de-duplicated, and filtered before analysis; the report must
+also disclose included, excluded, and unattributed cost coverage.
+
 ```python
 import importlib.util
 from pathlib import Path

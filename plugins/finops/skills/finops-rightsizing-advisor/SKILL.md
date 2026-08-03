@@ -36,11 +36,47 @@ out of scope here until that grant lands.
 
 ## Procedure
 
+### Step 0 — Resolve the managed boundary
+
+First load `finops-managed-scope` and follow its `scope.py` procedure to dynamically GET and validate
+the current agent `managedResources`. Do this before every FinOps request; do not reuse a prior list.
+Use the validated managed scopes, expanded to their descendant subscriptions/resource groups/resources,
+as the default and only scheduled boundary. Scheduled runs are fail-closed with no override. For an
+interactive resource named outside that boundary, disclose the mismatch and wait for explicit
+confirmation in a subsequent user turn before any broader Azure query. Broad RBAC never expands scope.
+
+For each effective scope, run Advisor and Resource Graph with explicit subscription selection, and
+retain only returned resource ids inside the expanded boundary. A full-subscription effective scope
+is queried once. For an RG-only effective scope, use both the subscription id and exact resource-group
+constraint shown below, then apply the normalized ARM-id client-side scope filter as defense in depth.
+De-duplicate resources when effective scopes overlap. Pull metrics only for those retained resources.
+Pull UsageDetails independently for every effective
+scope where the API supports it, paginate each scope independently, de-duplicate overlapping line
+items, and filter resource ids against the boundary as defense in depth. Report included scopes,
+excluded rows/resources, unattributed cost rows, and any scope/API coverage gaps.
+
 ### Step 1 — Pull Azure Advisor cost recommendations
 
 ```bash
-az advisor recommendation list --category Cost -o json
+az advisor recommendation list \
+  --subscription <EFFECTIVE_SUBSCRIPTION_ID> \
+  --category Cost \
+  -o json
 ```
+
+For an RG-only managed scope, constrain the same command to that exact resource group:
+
+```bash
+az advisor recommendation list \
+  --subscription <EFFECTIVE_SUBSCRIPTION_ID> \
+  --resource-group <EFFECTIVE_RESOURCE_GROUP> \
+  --category Cost \
+  -o json
+```
+
+Run once per unique effective subscription, or once per unique effective RG when the subscription is
+not fully managed. After either command, retain only recommendations whose normalized
+`resourceMetadata.resourceId`/`impactedValue` is inside the corresponding effective scope.
 
 Flatten each recommendation to the shape `rightsize.py` expects:
 `{resourceId, problem, recommendation, targetSku, savingsUsd}` — `resourceId` from
@@ -51,11 +87,23 @@ Flatten each recommendation to the shape `rightsize.py` expects:
 ### Step 2 — Pull inventory (Resource Graph) for idle patterns Advisor misses
 
 ```bash
-az graph query -q "Resources | where type in~ ('microsoft.compute/virtualmachines','microsoft.compute/disks','microsoft.web/serverfarms','microsoft.app/managedenvironments','microsoft.app/containerapps','microsoft.app/sessionpools') | project id, type, sku=tostring(sku.name), properties, tags" --first 1000 -o json
+az graph query \
+  --subscriptions <EFFECTIVE_SUBSCRIPTION_ID> \
+  -q "Resources | where type in~ ('microsoft.compute/virtualmachines','microsoft.compute/disks','microsoft.web/serverfarms','microsoft.app/managedenvironments','microsoft.app/containerapps','microsoft.app/sessionpools') | project id, type, sku=tostring(sku.name), properties, tags" \
+  --first 1000 \
+  -o json
 ```
 
+For an RG-only managed scope, add the exact case-insensitive Kusto predicate before `project`:
+`| where resourceGroup =~ '<EFFECTIVE_RESOURCE_GROUP>'`, while retaining
+`--subscriptions <EFFECTIVE_SUBSCRIPTION_ID>`. After retrieval, also keep only ids whose normalized
+ARM prefix is exactly
+`/subscriptions/<effective_subscription_id>/resourcegroups/<effective_resource_group>/`.
+
 On large subscriptions Resource Graph caps at 1000 rows per page — **paginate with `--skip-token`**
-(from the response) until it's empty so you don't miss resources.
+(from the response) until it's empty so you don't miss resources. Every page request must retain the
+same `--subscriptions` value and, for RG-only scope, the same `resourceGroup =~` predicate and
+client-side ARM-prefix filter.
 
 Flatten each row to `{resourceId, type, sku, powerState, diskState, numberOfSites, environmentId, minReplicas, readySessionInstances, tags}`:
 
@@ -73,7 +121,7 @@ Flatten each row to `{resourceId, type, sku, powerState, diskState, numberOfSite
 - **Dynamic session pool** (`microsoft.app/sessionpools`) `readySessionInstances` from
   `properties.scaleConfiguration.readySessionInstances`. Pre-warmed sessions bill continuously, so a
   pool with `readySessionInstances>=1` and no session traffic is pure waste. **Important:** these do
-  **not** appear in `az resource list -g <rg>` (only `az graph query` returns them), yet they are
+  **not** appear in `az resource list -g <rg>` (only Resource Graph returns them), yet they are
   frequently the single largest line items on the bill.
 
 ### Step 3 — Pull utilization (Azure Monitor) for VM candidates

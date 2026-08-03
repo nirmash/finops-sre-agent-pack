@@ -33,11 +33,28 @@ spec:
   cron: __COST_OPT_CRON__
   modelTier: ReasoningHeavy
   agentPrompt: |
+    STRICT MANAGED-SCOPE PREAMBLE — complete this before any Azure analysis query,
+    email, ListReports/GetReport call, or SaveReport call:
+    0. Load `finops-managed-scope` and follow its `scope.py` procedure using agent
+       resource ID `__AGENT_RESOURCE_ID__`. Dynamically GET the agent's current
+       `managedResources`; do not use a cached list. Validate and normalize every
+       scope, expand only to Azure descendants, and use that effective scope set as
+       the sole analysis boundary.
+       - If discovery fails, is malformed, or returns an empty list, FAIL CLOSED:
+         stop without querying analysis data, sending email, or creating/updating/
+         saving a report. State the scope error only.
+       - This scheduled task accepts NO override or broader user/requested scope.
+         Broad RBAC/visibility must never expand the boundary.
+       - Query each effective scope independently where the API supports scoped
+         retrieval; paginate each independently, de-duplicate overlaps, filter all
+         results against the boundary, and disclose included, excluded, unattributed,
+         unsupported, and partial/failed scope coverage.
+
     Create or update a Live Report now using the `live_report_authoring` skill.
     This is an explicit request to author and SAVE a Live Report — proceed without
     asking any questions and do not defer it to chat.
 
-    Report: a FinOps executive cost-optimization rollup for Azure subscription __SUB_ID__.
+    Report: a FinOps executive cost-optimization rollup for the current managed Azure scopes.
 
     Idempotent weekly refresh — keep ONE report and version it:
     1. Call ListReports. If a report named exactly "FinOps: Cost Optimization" already
@@ -46,7 +63,8 @@ spec:
        reportId (create it).
 
     This is a SNAPSHOT report, not a connector-backed live report:
-    2. Pull the data NOW by running the pack's four read-only analyses via the
+    2. Pull the data NOW per effective managed scope/expanded descendant by running
+       the pack's four read-only analyses via the
        `finops-cost-optimization-report` skill. Read its SKILL.md and follow it —
        run each underlying skill and keep its structured output:
          a. finops-cost-anomaly-detection -> detect_anomalies(line_items)
@@ -57,6 +75,14 @@ spec:
        allocation. Do NOT use `az rest --method post` or the Cost Management Query
        API — POST is blocked as a write. If any one analysis cannot run or returns
        nothing, keep going: the rollup treats a missing input as an empty section.
+       When rightsizing/allocation query Advisor or Resource Graph, every Advisor
+       command must use `--subscription <EFFECTIVE_SUBSCRIPTION_ID>` (plus
+       `--resource-group <EFFECTIVE_RESOURCE_GROUP>` for RG-only scope), and every
+       ARG command must use `az graph query --subscriptions
+       <EFFECTIVE_SUBSCRIPTION_ID> ...`. RG-only ARG queries must additionally use
+       the exact case-insensitive `resourceGroup =~ '<EFFECTIVE_RESOURCE_GROUP>'`
+       predicate and client-side exact normalized RG ARM-prefix filtering. Retain
+       constraints across pagination and de-duplicate overlapping scopes.
     3. Read the skill's summarize.py into the sandbox and run
        summarize_optimization(anomalies=..., rightsizing=..., allocation=...,
        budgets=...) to get the executive headline, the single dollar-ranked

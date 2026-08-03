@@ -3,6 +3,10 @@
 This aggregator accepts the already-computed outputs of the anomaly, rightsizing,
 allocation, and budget functions.
 
+In a live run, those upstream analyses are executed separately for every dynamically discovered
+managed scope and their UsageDetails coverage includes included, excluded, and unattributed cost.
+The placeholder subscription below does not select or broaden scope.
+
 ```python
 import importlib.util
 from datetime import date

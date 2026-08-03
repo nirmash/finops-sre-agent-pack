@@ -22,17 +22,47 @@ spec:
   cron: __CRON__
   modelTier: ReasoningHeavy
   agentPrompt: |
-    Run the `finops-rightsizing-advisor` skill for subscription __SUB_ID__. Read-only.
+    STRICT MANAGED-SCOPE PREAMBLE — complete this before any Azure analysis query,
+    email, ListReports/GetReport call, or SaveReport call:
+    0. Load `finops-managed-scope` and follow its `scope.py` procedure using agent
+       resource ID `__AGENT_RESOURCE_ID__`. Dynamically GET the agent's current
+       `managedResources`; do not use a cached list. Validate and normalize every
+       scope, expand only to Azure descendants, and use that effective scope set as
+       the sole analysis boundary.
+       - If discovery fails, is malformed, or returns an empty list, FAIL CLOSED:
+         stop without querying analysis data, sending email, or creating/updating/
+         saving a report. State the scope error only.
+       - This scheduled task accepts NO override or broader user/requested scope.
+         Broad RBAC/visibility must never expand the boundary.
+       - Query each effective scope independently where the API supports scoped
+         retrieval; paginate each independently, de-duplicate overlaps, filter all
+         results against the boundary, and disclose included, excluded, unattributed,
+         unsupported, and partial/failed scope coverage.
+
+    Run the `finops-rightsizing-advisor` skill for every effective managed scope and
+    expanded descendant. Read-only.
     Follow the skill's procedure exactly:
 
     1. Load the skill — read its SKILL.md so you use the bundled rightsize.py and steps.
-    2. Step 1 (Advisor): `az advisor recommendation list --category Cost` and flatten to
+    2. Step 1 (Advisor): run `az advisor recommendation list --subscription
+       <EFFECTIVE_SUBSCRIPTION_ID> --category Cost` per effective subscription,
+       adding `--resource-group <EFFECTIVE_RESOURCE_GROUP>` for an RG-only scope,
+       and flatten to
        {resourceId, problem, recommendation, targetSku, savingsUsd}.
-    3. Step 2 (inventory): `az graph query` for VMs, disks, App Service plans, Azure
+       Client-side filter normalized Advisor resource ids to the exact effective
+       subscription/RG and de-duplicate overlaps.
+    3. Step 2 (inventory): run `az graph query --subscriptions
+       <EFFECTIVE_SUBSCRIPTION_ID> ...` per effective scope for VMs,
+       disks, App Service plans, Azure
        Container Apps (managedenvironments + containerapps), and dynamic session pools
        (microsoft.app/sessionpools — these do NOT show in `az resource list` and often top
        the bill); flatten to {resourceId, type, sku, powerState, diskState, numberOfSites,
        environmentId, minReplicas, readySessionInstances, tags}.
+       For an RG-only scope, include the exact case-insensitive
+       `resourceGroup =~ '<EFFECTIVE_RESOURCE_GROUP>'` predicate and also filter
+       returned ids client-side to the exact normalized RG ARM prefix. Retain
+       `--subscriptions`, the predicate, and the client filter on every page; query
+       unique scopes once and de-duplicate overlaps.
     4. Step 3 (utilization): for each VM candidate, `az monitor metrics list` "Percentage CPU"
        over the last 14 days; reduce to {cpu_p95, cpu_avg, mem_p95, sample_days}.
     5. Step 3b (activity): for each Container App, `az monitor metrics list` "Requests" (Total,

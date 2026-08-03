@@ -40,13 +40,38 @@ scheduled mutations, or filtered budget creation.
 The generated script runs under the human's Azure CLI identity. The pack does not grant RBAC. The
 human needs Cost Management Contributor (or equivalent budget write permission) at the target scope.
 
+## Procedure
+
+### Step 0 — Resolve the managed boundary
+
+First load `finops-managed-scope` and follow its `scope.py` procedure to dynamically GET and validate
+the current agent `managedResources`; do not reuse a cached result. Managed scopes are the default
+planning boundary, and budget reads/recommendations must be performed independently per effective
+scope. Scheduled work is strict, fail-closed, accepts no override, and must never produce a mutation
+plan. Broad RBAC never silently expands scope.
+
+For budget discovery and recommendation-only work, preserve every configured management-group scope
+as a direct budget query target in addition to expanded descendant effective scopes. Build a
+case-insensitive canonical union and query each target exactly once; do not query a descendant
+management group directly unless it is itself configured in `managedResources`. This ensures a
+management-group-level budget is not hidden by expansion into subscriptions/resource groups. Exact
+create/update planning for a configured management group reads the named budget directly at that
+management-group scope; descendant cost/budget reads do not substitute for that exact GET.
+
+For interactive work, if the requested budget scope is outside the managed boundary, disclose the
+exact outside scope and ask whether to broaden this one analysis. Do not read that scope, derive an
+amount, or emit a proposal/script until the user provides explicit confirmation in a subsequent
+turn. After confirmation, limit retrieval and the plan to the named scope; never treat confirmation
+as a general scope expansion. Report managed, explicitly confirmed, excluded, and unsupported scopes.
+
 ## Choose the output
 
 ### Recommendation-only
 
 For “what should my budget be?” or other advisory language:
 
-1. Read relevant budgets with `RunAzCliReadCommands`.
+1. Read relevant budgets with `RunAzCliReadCommands`, including direct configured-management-group
+   budget collections and the de-duplicated expanded descendant effective scopes.
 2. Load `recommend.py` with `ExecutePythonCode` and call `recommend_budgets`.
 3. Report amounts, evidence, assumptions, and missing contacts. Do not run any generated command.
 

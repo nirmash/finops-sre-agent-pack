@@ -32,9 +32,34 @@ budgets defined" and points to `finops-budget-editor`, which can recommend a bud
 reviewable create plan and human-run script, rather than failing silently. Azure's
 own `forecastSpend` is preferred when present; when it is absent (it often is on the GET response)
 the skill computes a **linear run-rate** month-end forecast in-sandbox and labels the source.
-Multi-currency portfolios and management-group rollups are out of scope until needed.
+Multi-currency portfolios are out of scope. A configured management-group scope is queried directly
+for budgets defined at that management group; those budgets are evaluated alongside budgets from the
+expanded descendant effective scopes.
 
 ## Procedure
+
+### Step 0 — Resolve the managed boundary
+
+First load `finops-managed-scope` and follow its `scope.py` procedure to dynamically GET and validate
+the current agent `managedResources`; never use a cached result. The validated managed scopes are the
+default boundary. Scheduled runs are strict, fail closed on discovery/validation failure or an empty
+list, and accept no override. In interactive work, a named outside-scope budget or target requires
+disclosure and explicit confirmation in a subsequent turn before any broader Azure query. Broad RBAC
+never silently expands the boundary.
+
+Build budget query targets as the case-insensitive, canonical union of:
+
+1. every configured management-group scope from the validated `managedResources` list, queried
+   **directly** so management-group-level budgets are not lost; and
+2. each effective scope in the expanded descendant set where the Budgets API is supported.
+
+De-duplicate that union before querying and query each target exactly once, including when an
+explicit/effective scope overlaps. Do not query descendant management groups merely because they were
+discovered for expansion unless the descendant management group is itself configured in
+`managedResources`. Keep scope
+identity on every budget, reject responses outside the boundary, and report included scopes, excluded
+responses, unsupported/failed scopes, and scopes with no budgets. Do not replace per-scope evaluation
+with a single subscription-wide list.
 
 ### Step 1 — Read the budgets (read-only GET)
 
@@ -46,7 +71,16 @@ az rest --method get \
   -o json
 ```
 
-For a resource-group budget, use
+For every configured management group, query its budget collection directly:
+
+```bash
+az rest --method get \
+  --url "https://management.azure.com/providers/Microsoft.Management/managementGroups/<MG_ID>/providers/Microsoft.Consumption/budgets?api-version=2023-05-01" \
+  -o json
+```
+
+Also repeat the GET for each expanded descendant effective scope, subject to the de-duplicated query
+targets above. For a resource-group budget, use
 `.../subscriptions/<SUB_ID>/resourceGroups/<RG>/providers/Microsoft.Consumption/budgets`. The response
 is `{"value": [ ... ]}`; pass the whole `value` array to Step 2. Each budget carries
 `properties.amount`, `properties.timeGrain`, `properties.timePeriod`, `properties.currentSpend`

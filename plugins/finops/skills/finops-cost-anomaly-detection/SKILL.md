@@ -20,6 +20,20 @@ periodic cost summary, use `cost-optimization-report` instead.
 
 ## Procedure
 
+### Step 0 — Resolve the managed boundary
+
+First load `finops-managed-scope` and follow its `scope.py` procedure to dynamically GET and validate
+the current agent `managedResources`; never reuse cached scope. Managed scopes and expanded descendants
+are the default boundary. Scheduled runs are strict/fail-closed and accept no override. An interactive
+named resource outside scope requires disclosure and explicit confirmation in a subsequent turn before
+any broader query. Broad RBAC never silently expands scope.
+
+Pull UsageDetails independently for every effective scope where supported, paginate each scope
+independently, and track completeness per scope. De-duplicate overlap, then filter resource ids and
+scope fields against the expanded boundary as defense in depth. Scope deployment and Activity Log
+correlation to the same effective scope/resource. Report included scopes, excluded rows, unattributed
+cost, unsupported scopes, and partial/failed coverage.
+
 ### Step 1 — Pull the daily cost time-series
 
 Use the **modern Consumption UsageDetails GET** (the Cost Management Query/POST aggregation API is

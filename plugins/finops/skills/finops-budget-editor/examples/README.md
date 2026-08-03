@@ -3,6 +3,10 @@
 Run from the repository root. Building a proposal and application script is pure and offline. The
 agent returns the script for a human to review/save/run and never executes it.
 
+The subscription ID below is placeholder input for the offline helper. In an interactive agent run,
+the requested subscription, resource group, or management group is checked against the current
+managed resources first. An outside scope requires explicit confirmation on a subsequent turn.
+
 ```python
 import importlib.util
 from datetime import date

@@ -14,16 +14,38 @@ Structure mirrors [Azure/sre-agent-plugins](https://github.com/Azure/sre-agent-p
 
 | Plugin | Description |
 |--------|-------------|
-| [`finops`](plugins/finops/README.md) | **FinOps pack** — eight read-only FinOps skills, the standalone `finops-investigator` agent, and eight proactive read-only scheduled tasks including six Live Reports. Budget planning can generate a validated human-run application script. |
+| [`finops`](plugins/finops/README.md) | **FinOps pack** — nine read-only FinOps skills including `finops-managed-scope`, the standalone `finops-investigator` agent, and eight proactive read-only scheduled tasks including six Live Reports. Budget planning can generate a validated human-run application script. |
+
+## Managed scope
+
+Every FinOps run dynamically reads
+`properties.knowledgeGraphConfiguration.managedResources` from the Azure SRE Agent ARM resource
+identified by `AGENT_RESOURCE_ID`. Subscription, resource-group, and management-group scopes are
+supported. Change the agent's managed resources and the new boundary takes effect on the next run;
+the plugin does not need to be reinstalled.
+
+- Scheduled tasks are hard-bound to the current managed scope and fail closed if discovery or
+  management-group expansion fails. They do not query analysis data, send email, or save a report
+  after a scope-discovery failure.
+- Interactive requests use managed scope by default. A request outside it proceeds only after the
+  exact outside scopes are shown and the user explicitly confirms them on a subsequent turn.
+- UsageDetails-based reports disclose included, excluded, and unattributed row counts and costs so
+  scope coverage is visible.
+- Broad inherited or historical RBAC does not broaden this logical boundary. Installation does not
+  revoke old broad grants.
+
+This is a skill-and-policy addition only; it makes no SRE Agent runtime changes.
 
 ## Install
 
 The supported installer installs the complete **`finops` plugin package** from this repository: all
-eight skills, `finops-investigator`, eight scheduled tasks, and six Live Reports. It does not install
+nine skills, `finops-investigator`, eight scheduled tasks, and six Live Reports. It does not install
 unrelated plugins from the marketplace.
 
-The installer uses the SRE Agent management API and requires `az`, `curl`, and `python3`. Sign in
-with `az login`, then run:
+The installer uses the SRE Agent management API and requires `az`, `curl`, and `python3`.
+`AGENT_RESOURCE_ID` is required; endpoint-only installation is not supported because the live
+managed scope must be discoverable. Sign in with `az login` using an identity that can manage the
+agent and create role assignments on it, then run:
 
 ```bash
 AGENT_RESOURCE_ID=/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.App/agents/<agent> \
@@ -38,8 +60,11 @@ AGENT_RESOURCE_ID=/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.A
   ./plugins/finops/install-api.sh
 ```
 
-To optionally grant Cost Management Reader to the agent's managed identity during installation, also
-set `MI_OBJECT_ID=<agent-mi-object-id>`. The installer adds no budget-write permissions. See the
+The installer grants the agent's user-assigned identity **Reader** on the exact agent ARM resource
+so each run can read `managedResources`. To optionally grant **Cost Management Reader** on each
+currently configured managed scope, also set `MI_OBJECT_ID=<agent-mi-object-id>`. It does not grant
+that role at a parent scope, revoke older broad assignments, or add budget-write permissions.
+`SUB_ID` is deprecated and ignored for scheduled scope. See the
 [FinOps plugin documentation](plugins/finops/README.md#install-everything-recommended) for all
 configuration options and installed components.
 
@@ -63,5 +88,5 @@ written.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/          # 204 offline tests, including 78 budget recommendation/proposal/script tests
+pytest tests/          # 281 offline tests, including managed-scope and budget-script coverage
 ```

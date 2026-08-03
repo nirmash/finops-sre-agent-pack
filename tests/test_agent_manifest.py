@@ -10,6 +10,7 @@ MANIFEST = ROOT / "plugins" / "finops" / "agents" / "finops-investigator.json"
 INSTALLER = ROOT / "plugins" / "finops" / "install-api.sh"
 
 FINOPS_SKILLS = {
+    "finops-managed-scope",
     "finops-cost-anomaly-detection",
     "finops-rightsizing-advisor",
     "finops-cost-allocation",
@@ -39,6 +40,7 @@ def _run_manifest_builder(manifest):
         "FINOPS_AGENT_NAME": "finops-investigator",
         "FINOPS_MCP_TOOLS": "",
         "FINOPS_CONNECTORS": "",
+        "AGENT_RESOURCE_ID": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/agents/agent",
     }
     return subprocess.run(
         ["python3", "-c", match.group(1), "/dev/stdout"],
@@ -70,6 +72,13 @@ def test_manifest_defines_read_only_finops_agent():
     assert "scheduled tasks are always read-only" in instructions
     assert "never change rbac" in instructions
     assert "human decision" in instructions
+    assert "before every finops request" in instructions
+    assert "managedresources" in instructions
+    assert "{{agent_resource_id}}" in instructions
+    assert "scheduled work is strict and fail-closed" in instructions
+    assert "explicit confirmation" in instructions
+    assert "subsequent turn" in instructions
+    assert "broad rbac" in instructions
 
 
 def test_manifest_allows_exact_finops_skills_and_live_report_authoring():
@@ -144,6 +153,39 @@ def test_installer_manifest_builder_normalizes_only_canonical_core_tools():
         "GetReport",
         "SaveReport",
     ]
+
+
+def test_installer_manifest_builder_injects_agent_resource_id():
+    result = _run_manifest_builder(_manifest())
+
+    assert result.returncode == 0, result.stderr
+    built = json.loads(result.stdout)
+    instructions = built["properties"]["instructions"]
+    assert "{{AGENT_RESOURCE_ID}}" not in instructions
+    assert "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/agents/agent" in instructions
+    assert "__AGENT_RESOURCE_ID__" not in built["properties"]["instructions"]
+    assert (
+        "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/agents/agent"
+        in built["properties"]["instructions"]
+    )
+
+
+def test_installer_rejects_manifest_without_agent_resource_placeholder():
+    manifest = _manifest()
+    manifest["properties"]["instructions"] = "Read-only FinOps agent."
+    result = _run_manifest_builder(manifest)
+
+    assert result.returncode != 0
+    assert "AGENT_RESOURCE_ID placeholder" in result.stderr
+
+
+def test_installer_rejects_manifest_missing_managed_scope_skill():
+    manifest = _manifest()
+    manifest["properties"]["allowedSkills"].remove("finops-managed-scope")
+    result = _run_manifest_builder(manifest)
+
+    assert result.returncode != 0
+    assert "all nine FinOps skills" in result.stderr
 
 
 def test_installer_rejects_custom_manifest_with_azure_write_tool():

@@ -34,6 +34,23 @@ exports and management-group rollups are out of scope here until needed.
 
 ## Procedure
 
+### Step 0 — Resolve the managed boundary
+
+First load `finops-managed-scope` and follow its `scope.py` procedure to dynamically GET and validate
+the current agent `managedResources`; never reuse cached scope. Managed scopes and expanded descendants
+are the default boundary. Scheduled runs are strict/fail-closed with no override. An interactive named
+outside-scope target requires disclosure and explicit confirmation in a subsequent turn before any
+broader query. Broad RBAC never silently expands scope.
+
+Pull UsageDetails independently for each effective scope where supported, with independent pagination
+and completeness tracking. De-duplicate overlapping line items and filter attributable resource ids
+against the boundary. Query Resource Graph once per unique effective subscription, always using
+`--subscriptions`; if only specific RGs are managed in that subscription, query each unique RG with
+the exact case-insensitive predicate and client-side ARM-prefix filter below. De-duplicate overlapping
+results and retain only in-bound resources. Preserve cost rows with no usable resource/scope identity as `unattributed` rather than
+assigning them. Report included scopes, excluded rows/resources, unattributed cost, unsupported scopes,
+and partial/failed coverage.
+
 ### Step 1 — Pull per-resource monthly cost
 
 Use the **same hardened Consumption UsageDetails pull as `finops-cost-anomaly-detection` Step 1**
@@ -49,10 +66,27 @@ case-insensitively.
 ### Step 2 — Pull resource tags (Resource Graph)
 
 ```bash
-az graph query -q "Resources | project id, tags" --first 1000 -o json
+az graph query \
+  --subscriptions <EFFECTIVE_SUBSCRIPTION_ID> \
+  -q "Resources | project id, tags" \
+  --first 1000 \
+  -o json
 ```
 
-Paginate with `--skip-token` until empty (Resource Graph caps at 1000 rows/page). Flatten to
+For an RG-only managed scope, use:
+
+```bash
+az graph query \
+  --subscriptions <EFFECTIVE_SUBSCRIPTION_ID> \
+  -q "Resources | where resourceGroup =~ '<EFFECTIVE_RESOURCE_GROUP>' | project id, tags" \
+  --first 1000 \
+  -o json
+```
+
+Then keep only ids whose normalized ARM prefix is exactly
+`/subscriptions/<effective_subscription_id>/resourcegroups/<effective_resource_group>/`.
+Paginate with `--skip-token` until empty (Resource Graph caps at 1000 rows/page), retaining the same
+`--subscriptions`, RG predicate, and client-side filter on every page. Flatten to
 `{resourceId: {tagKey: tagVal}}`. Keep the raw tag values as-is — the ranker normalizes case and
 flags variant spellings itself.
 

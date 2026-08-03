@@ -28,11 +28,28 @@ spec:
   cron: __CRON__
   modelTier: ReasoningHeavy
   agentPrompt: |
+    STRICT MANAGED-SCOPE PREAMBLE — complete this before any Azure analysis query,
+    email, ListReports/GetReport call, or SaveReport call:
+    0. Load `finops-managed-scope` and follow its `scope.py` procedure using agent
+       resource ID `__AGENT_RESOURCE_ID__`. Dynamically GET the agent's current
+       `managedResources`; do not use a cached list. Validate and normalize every
+       scope, expand only to Azure descendants, and use that effective scope set as
+       the sole analysis boundary.
+       - If discovery fails, is malformed, or returns an empty list, FAIL CLOSED:
+         stop without querying analysis data, sending email, or creating/updating/
+         saving a report. State the scope error only.
+       - This scheduled task accepts NO override or broader user/requested scope.
+         Broad RBAC/visibility must never expand the boundary.
+       - Query each effective scope independently where the API supports scoped
+         retrieval; paginate each independently, de-duplicate overlaps, filter all
+         results against the boundary, and disclose included, excluded, unattributed,
+         unsupported, and partial/failed scope coverage.
+
     Create or update a Live Report now using the `live_report_authoring` skill.
     This is an explicit request to author and SAVE a Live Report — proceed without
     asking any questions and do not defer it to chat.
 
-    Report: a FinOps cost overview snapshot for Azure subscription __SUB_ID__.
+    Report: a FinOps cost overview snapshot for the current managed Azure scopes.
 
     Idempotent daily refresh — keep ONE report and version it:
     1. Call ListReports. If a report named exactly "FinOps: Cost Overview" already
@@ -41,7 +58,8 @@ spec:
        reportId (create it).
 
     This is a SNAPSHOT report, not a connector-backed live report:
-    2. Pull the data NOW, at authoring time, using read-only Azure cost commands.
+    2. Pull the data NOW, at authoring time, per effective managed scope using
+       read-only Azure cost commands.
        Use `az rest --method get` against Consumption UsageDetails (ActualCost) for
        the last 30 days with `&$top=1000`, projecting to just the needed fields with
        `--query "{value: value[].{date: properties.date, cost: properties.costInUSD,

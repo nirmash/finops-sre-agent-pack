@@ -29,11 +29,28 @@ spec:
   cron: __CRON__
   modelTier: ReasoningHeavy
   agentPrompt: |
+    STRICT MANAGED-SCOPE PREAMBLE — complete this before any Azure analysis query,
+    email, ListReports/GetReport call, or SaveReport call:
+    0. Load `finops-managed-scope` and follow its `scope.py` procedure using agent
+       resource ID `__AGENT_RESOURCE_ID__`. Dynamically GET the agent's current
+       `managedResources`; do not use a cached list. Validate and normalize every
+       scope, expand only to Azure descendants, and use that effective scope set as
+       the sole analysis boundary.
+       - If discovery fails, is malformed, or returns an empty list, FAIL CLOSED:
+         stop without querying analysis data, sending email, or creating/updating/
+         saving a report. State the scope error only.
+       - This scheduled task accepts NO override or broader user/requested scope.
+         Broad RBAC/visibility must never expand the boundary.
+       - Query each effective scope independently where the API supports scoped
+         retrieval; paginate each independently, de-duplicate overlaps, filter all
+         results against the boundary, and disclose included, excluded, unattributed,
+         unsupported, and partial/failed scope coverage.
+
     Create or update a Live Report now using the `live_report_authoring` skill.
     This is an explicit request to author and SAVE a Live Report — proceed without
     asking any questions and do not defer it to chat.
 
-    Report: a FinOps rightsizing / savings snapshot for Azure subscription __SUB_ID__.
+    Report: a FinOps rightsizing / savings snapshot for the current managed Azure scopes.
 
     Idempotent weekly refresh — keep ONE report and version it:
     1. Call ListReports. If a report named exactly "FinOps: Rightsizing Savings"
@@ -42,9 +59,13 @@ spec:
        reportId (create it).
 
     Gather the data NOW by running the finops-rightsizing-advisor analysis (read-only):
-    2. Load finops-rightsizing-advisor (read its SKILL.md) and follow its steps to
+    2. Load finops-rightsizing-advisor (read its SKILL.md) and follow its steps for
+       every effective managed scope/expanded descendant to
        produce ranked recommendations: Azure Advisor cost recs
-       (`az advisor recommendation list --category Cost`); Resource Graph inventory of
+       (`az advisor recommendation list --subscription <EFFECTIVE_SUBSCRIPTION_ID>
+       --category Cost`, adding `--resource-group <EFFECTIVE_RESOURCE_GROUP>` for an
+       RG-only scope); Resource Graph inventory via `az graph query --subscriptions
+       <EFFECTIVE_SUBSCRIPTION_ID> ...` of
        VMs/disks/App Service plans/Azure Container Apps (managedenvironments + containerapps;
        project environmentId + minReplicas) and dynamic session pools (microsoft.app/sessionpools;
        project readySessionInstances — these do not show in `az resource list` and often top the
@@ -65,6 +86,11 @@ spec:
        run `recommend_rightsizing(resources=..., utilization=..., activity=..., costs=..., advisor=...)`
        to get the ranked list with estimated monthly savings (including any kind="review"
        high-spend items with no idle rule yet).
+       For an RG-only scope, the ARG query must include the exact case-insensitive
+       `resourceGroup =~ '<EFFECTIVE_RESOURCE_GROUP>'` predicate and its results must
+       also be filtered client-side to the exact normalized RG ARM prefix. Apply the
+       equivalent exact client-side scope filter to Advisor results. Retain all
+       subscription/RG constraints on pagination and de-duplicate overlapping scopes.
     3. Do NOT use `az rest --method post` or the Cost Management Query API — POST is
        blocked as a write.
 

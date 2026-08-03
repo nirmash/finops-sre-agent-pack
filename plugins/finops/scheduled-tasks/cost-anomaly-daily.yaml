@@ -22,11 +22,30 @@ spec:
   cron: __CRON__
   modelTier: ReasoningHeavy
   agentPrompt: |
-    Run the `finops-cost-anomaly-detection` skill for subscription __SUB_ID__. Read-only.
+    STRICT MANAGED-SCOPE PREAMBLE — complete this before any Azure analysis query,
+    email, ListReports/GetReport call, or SaveReport call:
+    0. Load `finops-managed-scope` and follow its `scope.py` procedure using agent
+       resource ID `__AGENT_RESOURCE_ID__`. Dynamically GET the agent's current
+       `managedResources`; do not use a cached list. Validate and normalize every
+       scope, expand only to Azure descendants, and use that effective scope set as
+       the sole analysis boundary.
+       - If discovery fails, is malformed, or returns an empty list, FAIL CLOSED:
+         stop without querying analysis data, sending email, or creating/updating/
+         saving a report. State the scope error only.
+       - This scheduled task accepts NO override or broader user/requested scope.
+         Broad RBAC/visibility must never expand the boundary.
+       - Query each effective scope independently where the API supports scoped
+         retrieval; paginate each independently, de-duplicate overlaps, filter all
+         results against the boundary, and disclose included, excluded, unattributed,
+         unsupported, and partial/failed scope coverage.
+
+    Run the `finops-cost-anomaly-detection` skill for every effective managed scope.
+    Read-only.
     Follow the skill's procedure exactly:
 
     1. Load the skill — read its SKILL.md so you use the bundled detector and steps.
-    2. Step 1 (pull): GET Consumption UsageDetails (ActualCost) for the last 35 days via
+    2. Step 1 (pull): independently GET Consumption UsageDetails (ActualCost) for
+       every effective scope for the last 35 days via
        `az rest --method get` with `&$top=1000`, projecting to just the needed fields with
        `--query "{value: value[].{date: properties.date, cost: properties.costInUSD,
        meterCategory: properties.meterCategory, resourceGroup: properties.resourceGroup,
@@ -43,7 +62,8 @@ spec:
        `detect_anomalies(line_items)` with defaults (baseline_days=28, k=3.0,
        min_delta_usd=5.0, wow_ratio=1.5). Keep assume_last_partial=True so the partial
        newest billing day is excluded.
-    4. Step 3 (correlate): for EACH anomaly, search az subscription/resource-group
+    4. Step 3 (correlate): for EACH anomaly, search only its effective managed
+       scope's subscription/resource-group
        deployments, activity-log write ops, and GitHub commits + merged PRs
        (repo __GITHUB_REPO__) within +/-1 day of the spike date, and attach the most
        likely cause.

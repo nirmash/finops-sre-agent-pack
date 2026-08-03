@@ -1,9 +1,9 @@
 # finops-sre-agent-pack
 
 FinOps capabilities for [Azure SRE Agent](https://azure.microsoft.com/en-us/products/sre-agent),
-packaged as **skills + agents** — not as changes to the SRE Agent product. Everything runs on
-existing agent tools (read-only `az`, Resource Graph, Azure Monitor, the GitHub connector, and
-in-sandbox Python), so it ships and iterates on its own cadence with no product release.
+packaged as **skills + agents** — not as changes to the SRE Agent product. The pack and its agent use
+read-only Azure tools. Budget planning can produce a governed shell script for a human to review,
+save, and run manually with their own permissions; the agent never executes it.
 
 Structure mirrors [Azure/sre-agent-plugins](https://github.com/Azure/sre-agent-plugins).
 
@@ -14,7 +14,7 @@ Structure mirrors [Azure/sre-agent-plugins](https://github.com/Azure/sre-agent-p
 
 | Plugin | Description |
 |--------|-------------|
-| [`finops`](plugins/finops/README.md) | **FinOps pack** — eight read-only FinOps skills, the standalone `finops-investigator` agent, and eight proactive scheduled tasks including six Live Reports, installable with one command via the agent API ([`plugins/finops/install-api.sh`](plugins/finops/install-api.sh), no srectl needed). |
+| [`finops`](plugins/finops/README.md) | **FinOps pack** — eight read-only FinOps skills, the standalone `finops-investigator` agent, and eight proactive read-only scheduled tasks including six Live Reports. Budget planning can generate a validated human-run application script. |
 
 ## Adding plugins
 
@@ -32,5 +32,5 @@ written.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/          # 120 tests: 8 anomaly, 30 rightsizing, 13 cost-allocation, 14 budget-governance, 15 budget-editor, 9 cost-optimization, 15 finops-for-ai, 16 cost-vs-reliability
+pytest tests/          # 204 offline tests, including 78 budget recommendation/proposal/script tests
 ```

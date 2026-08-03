@@ -1,107 +1,174 @@
 ---
 name: finops-budget-editor
-description: Advisory budget right-sizing for Azure. Reads native Azure Cost Management budgets (GET Microsoft.Consumption/budgets — amount, currentSpend, and forecastSpend when present) and, for each scope, computes a recommended budget amount sized to max(current amount, forecast) plus a headroom buffer (default 15%), reusing the same run-rate forecast as budget-governance when Azure supplies none. It then renders the exact `az rest --method put` command a human can review and run — using the bundled recommend.py (run in-sandbox via ExecutePythonCode). It NEVER writes: the pack stays read-only and applying the command needs a Cost Management Contributor role the user supplies. Use for "what should my budget be", "is my budget too low/high", right-sizing an existing budget, or drafting a budget to set.
+description: Advisory Azure budget recommendations and deterministic create/update planning. Produces validated proposals and governed shell scripts for a human to review, save, and run manually; the agent never executes budget writes.
 ---
 
-## When to use this skill
+# FinOps budget planner
 
-Use it when the user wants a **recommended budget amount** — "what should my Azure budget be",
-"is my budget too low / too high", "right-size my budget", or "draft the budget I should set". It
-reads the customer's existing Azure Cost Management budgets, sizes a recommendation to their
-forecast plus headroom, and hands back the **exact command to apply it** for a human to run.
+Use this skill for budget recommendations or for a reviewable plan to create/update **one** Azure
+Cost Management budget. The skill is planning-only: it may return an exact PUT body, command, and
+human-run application script, but the agent must never execute them.
 
-This skill is **advisory and read-only**. It computes and prints a recommendation plus the write
-command; it does **not** execute the write. For a read-only *status* check (are we on budget, what is
-the forecast) use `finops-budget-governance`. For cost spikes use `finops-cost-anomaly-detection`;
-for idle/oversized waste use `finops-rightsizing-advisor`; for who owns the spend use
-`finops-cost-allocation`.
+For status only, use `finops-budget-governance`. This skill does not plan deletes, bulk mutations,
+scheduled mutations, or filtered budget creation.
 
-## Required access
+## Supported plans
 
-- **Cost Management Reader** (or **Reader**) on the subscription — enough to `GET
-  Microsoft.Consumption/budgets`. This skill reads only.
-- Read-only `az` (`RunAzCliReadCommands`) and `ExecutePythonCode` (in-sandbox evaluation). **No
-  POST/PUT/write APIs are called by the skill.**
-- **Applying** the recommendation (running the printed `az rest --method put`) requires **Cost
-  Management Contributor** on the budget scope — a write role that a person supplies out-of-band. The
-  skill deliberately stops at the recommendation so the pack keeps its read-only, zero-blast-radius
-  guarantee.
+- Scopes:
+  - `/subscriptions/{subscriptionId}`
+  - `/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}`
+  - `/providers/Microsoft.Management/managementGroups/{managementGroupId}`
+- Time grains: `Monthly`, `Quarterly`, `Annually`.
+- Creates are scope-wide. Reject a create with a filter.
+- API `2023-05-01` plans use category `Cost` only.
+- Updates preserve time grain, valid time period, filter, and notifications unless explicitly
+  changed.
+- A create requires `timePeriod.startDate` on the first day of a month at `00:00:00Z`, no earlier
+  than `2017-06-01` and no later than the first day of the month 12 months after planning time.
+  A create or explicit time-period change cannot start before the current selected grain period
+  (current month, quarter, or year). Preserved historical periods on updates remain valid.
+  `endDate` is optional; when present it only needs to be after `startDate`.
+- Every create, and every update whose current notifications are unusable, requires at least one
+  real email or Azure action group. A role-only notification does not satisfy this product policy.
+  Management-group budgets specifically require a real email; an action-group-only notification is
+  insufficient there, and management-group notifications must not contain `contactGroups`.
+- Defaults with supplied contacts are Actual 80% and Forecasted 100%. Explicit valid notifications
+  may override them. Operators are `EqualTo`, `GreaterThan`, or `GreaterThanOrEqualTo`, with at most
+  five notifications.
+- Never produce a command or script containing a placeholder contact.
 
-## Scope
+The generated script runs under the human's Azure CLI identity. The pack does not grant RBAC. The
+human needs Cost Management Contributor (or equivalent budget write permission) at the target scope.
 
-Right-sizes every budget returned by the budgets GET at the requested scope (subscription or a
-resource group). It is **service-agnostic** — it works off the budget objects Azure returns. With
-**no budgets defined** there is no spend basis to size from, so the skill says so and points at
-getting a spend figure first (e.g. the `finops-cost-allocation` / Cost Overview report) rather than
-inventing a number. Azure's own `forecastSpend` is preferred when present; when it is absent the
-skill reuses `budget-governance`'s **linear run-rate** forecast in-sandbox and labels the source.
-Multi-currency portfolios and management-group rollups are out of scope until needed.
+## Choose the output
 
-## Procedure
+### Recommendation-only
 
-### Step 1 — Read the budgets (read-only GET)
+For “what should my budget be?” or other advisory language:
 
-Pull the native budgets at the target scope. Subscription scope:
+1. Read relevant budgets with `RunAzCliReadCommands`.
+2. Load `recommend.py` with `ExecutePythonCode` and call `recommend_budgets`.
+3. Report amounts, evidence, assumptions, and missing contacts. Do not run any generated command.
+
+### Create/update planning
+
+For an explicit request to plan, draft, create, or update one named budget, build the deterministic
+proposal below. Return its **application script as the primary artifact**. Do not execute it.
+
+## Planning procedure
+
+### 1. Read the exact current budget
+
+Construct the exact resource URL:
+
+```text
+https://management.azure.com/{scope}/providers/Microsoft.Consumption/budgets/{encoded-name}?api-version=2023-05-01
+```
+
+Use `RunAzCliReadCommands` with `az rest --method get`. A returned object means `update`; a confirmed
+404 means `create`. Any other read failure must be disclosed. Pass the exact returned object to
+`build_budget_proposal(exact_budget=...)`, or `None` only after a confirmed absence. Do not infer
+existence from a list response. An update exact GET must include its top-level `eTag`; otherwise the
+helper refuses to emit an executable command/script. Update PUT bodies carry that captured top-level
+`eTag` as required by the Consumption Budget contract.
+
+### 2. Establish the amount
+
+Use a positive explicit amount when supplied. Otherwise fetch bounded Consumption UsageDetails
+`ActualCost` with **GET only**, minimal fields, complete `nextLink` pagination, and enough history:
+
+- Monthly: current month plus 3 complete months.
+- Quarterly: current quarter plus 4 complete quarters.
+- Annually: current year plus the prior complete year.
+
+Use a bounded URL of this form, encoding the real filter. Lower `$top` on 413, verify returned dates,
+and disclose/stop on missing pages:
 
 ```bash
 az rest --method get \
-  --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/budgets?api-version=2023-05-01" \
+  --url "https://management.azure.com/{scope}/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&\$filter=properties/usageStart ge '<START>' and properties/usageEnd le '<END>'&\$top=1000" \
+  --query "{value:value[].{date:properties.date,cost:properties.costInUSD},nextLink:nextLink}" \
   -o json
 ```
 
-For a resource-group budget, use
-`.../subscriptions/<SUB_ID>/resourceGroups/<RG>/providers/Microsoft.Consumption/budgets`. The response
-is `{"value": [ ... ]}`; pass the whole `value` array to Step 2. Each budget carries
-`properties.amount`, `properties.timeGrain`, `properties.timePeriod`, `properties.currentSpend`
-(`{amount, unit}`), an optional `properties.forecastSpend`, and `properties.notifications`. **If
-`value` is empty, skip to Step 3 and report "no budgets defined".**
-
-> **`currentSpend` freshness.** Azure computes each budget's `currentSpend` asynchronously: a **newly
-> created** budget reads `currentSpend: 0` for hours. When there is no forecast and no spend signal,
-> `recommend.py` returns `insufficient_data` for that budget rather than sizing it to zero — treat
-> that as "get a real spend figure first", not "set a $0 budget". Do **not** try to reconstruct
-> month-to-date spend with a UsageDetails pull — that heavy, `413`-prone query is unnecessary, and the
-> clean Cost Management aggregate query is a `POST`, which the read-only tooling blocks.
-
-### Step 2 — Recommend (bundled recommend.py, in-sandbox)
-
-Read the module and run it — do **not** re-implement the logic in the prompt:
-
-```
-read_skill_file(skill_name="finops-budget-editor", file_path="recommend.py")
-```
+Aggregate offline:
 
 ```python
-from recommend import recommend_budgets
-result = recommend_budgets(budgets)              # the value[] array from Step 1
-# result = recommend_budgets(budgets, buffer_pct=10)   # override the default 15% headroom
+period_totals = {
+    "current_period_total": 4200.0,
+    "prior_complete_period_totals": [3900.0, 4050.0, 4100.0],
+    "partial": False,
+    "warnings": [],
+}
 ```
 
-`recommend_budgets` handles all math and command generation:
+Deterministic basis:
 
-- **recommendations**: per-budget, sorted so the ones that would change come first. Each carries
-  `current_amount`, `forecast_spend` + `forecast_source` (`azure` or `run-rate`),
-  `recommended_amount` (`max(current_amount, forecast) × (1 + buffer)`, rounded up to a clean
-  number), an **action**, a one-line `rationale`, and the ready-to-run **`command`** (plus `put_url`
-  and `put_body` if you want to render them yourself).
-- **action** buckets: `raise` (recommended materially above the current amount) → `set` (no usable
-  current amount) → `tighten` (recommended well under the current amount) → `keep` (already
-  right-sized) → `insufficient_data` (no forecast or spend signal yet).
-- **notifications_added**: `True` when the budget had no notifications and the recommendation injected
-  a default Actual-80% + Forecasted-100% pair — that pair contains a **placeholder email the user must
-  replace** before running the command.
-- **summary**: a count of each action. **no_budgets**: `True` when nothing is defined.
+- Monthly: `max(current-month run rate, average prior 3 complete months)`.
+- Quarterly: `max(current-quarter run rate, average prior 4 complete quarters)`.
+- Annually: `max(current-year run rate, prior complete year)`.
 
-### Step 3 — Report
+Add headroom (default 15%) and reuse the helper's nice upward rounding. Never use the POST Cost
+Management Query API. If aggregates are partial/incomplete, do not derive an executable plan. A
+human-supplied explicit amount may still be planned, with a prominent partial-evidence warning.
 
-Produce a **budget recommendation table** (name, scope, current amount, forecast + source,
-**recommended amount**, action). Lead with the budgets whose `action` is `raise` / `set` / `tighten`
-— those are the ones worth changing — each with its `rationale`. For each such budget, show the exact
-**`command`** in a fenced block so the user can review and run it themselves, and **state plainly that
-this skill does not run it**: applying it needs Cost Management Contributor. Where a forecast is
-`run-rate` (not Azure's), say it is an estimate. Where `notifications_added` is `True`, tell the user
-to **replace the placeholder `<your-email@example.com>`** before running. For `insufficient_data`
-budgets, explain the spend signal is missing (likely an unsynced `currentSpend`) and recommend
-re-running once it syncs. If **no budgets are defined**, say so and recommend getting a spend figure
-(Cost Overview / `finops-cost-allocation`) before drafting one. If every budget is `keep`, say so in
-one line.
+### 3. Build the proposal and script
+
+Load the bundled helper; do not recreate validation or quoting:
+
+```python
+from recommend import build_budget_proposal
+
+proposal = build_budget_proposal(
+    scope=scope,
+    name=name,
+    exact_budget=exact_budget,
+    amount=amount,                   # or period_totals=period_totals
+    time_grain="Monthly",            # omit on update to preserve
+    time_period={
+        "startDate": "2026-08-01T00:00:00Z",
+        "endDate": "2027-08-01T00:00:00Z",
+    },
+    contacts=["owner@contoso.com"],  # or explicit notifications={...}
+)
+```
+
+Present:
+
+- operation, scope, name, before/after, and amount evidence/warnings;
+- PUT URL/body and post-write GET URL;
+- `application_script` (also available as `script`) in a fenced `bash` block;
+- the exact confirmation phrase embedded in the script.
+
+The script is self-contained and dependency-light (`bash`, `az`, `python3`). It uses
+`set -euo pipefail`, shell-quotes all generated values, requires an exact preflight GET, and aborts
+an update if the persisted PUT-controlled state differs from the proposal's captured `before`
+state. A create aborts if the budget now exists. The PUT also sends `If-Match=<captured eTag>` for
+updates or `If-None-Match=*` for creates, making the final write conditional. It then requires the
+human to type the exact confirmation phrase, performs one PUT, performs an exact GET read-back, and
+compares all PUT-controlled fields with exact decimal numeric equality. If an open-ended expected
+`timePeriod` omits `endDate`, Azure's returned default `endDate` is the only controlled server
+default ignored. It exits nonzero on mismatch. The legacy `command` field remains
+available for compatibility, but lead with
+the governed script.
+
+### 4. Hand off to the human
+
+Tell the human to:
+
+1. review the scope, name, amount, notifications, filter, URL, and body;
+2. save the fenced script locally;
+3. sign in with `az` using an identity that already has budget write access;
+4. run the script themselves and type the exact phrase only if the proposal is still intended;
+5. treat only a zero exit plus “read-back matches” as successful persistence.
+
+The agent does not run the script, invoke a write tool, grant a role, or claim that the plan was
+applied.
+
+## Hard restrictions
+
+- No agent-executed PUT/POST/PATCH/DELETE.
+- No write tool in the agent manifest.
+- No DELETE, bulk plan, filtered create, or scheduled mutation.
+- No placeholder contacts or invalid proposal script.
+- No role assignment or RBAC change.

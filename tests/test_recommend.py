@@ -40,6 +40,7 @@ def _budget(name, amount, current, *, forecast=None, notifications=None,
     return {
         "name": name,
         "id": (scope_id or f"/subscriptions/s/providers/Microsoft.Consumption/budgets/{name}"),
+        "eTag": '"etag-1"',
         "properties": props,
     }
 
@@ -123,7 +124,7 @@ def test_buffer_pct_override_changes_amount():
 
 def test_command_is_a_put_with_recommended_amount():
     b = _budget("m", 1000.0, 800.0)
-    r = _only(recommend_budgets([b], as_of=AS_OF))
+    r = _only(recommend_budgets([b], as_of=AS_OF, contacts=["team@example.org"]))
     assert "az rest --method put" in r["command"]
     assert "api-version=2023-05-01" in r["command"]
     assert r["put_body"]["properties"]["amount"] == r["recommended_amount"]
@@ -141,19 +142,29 @@ def test_existing_notifications_carried_through_not_added():
     assert r["put_body"]["properties"]["notifications"] == notifications
 
 
-def test_default_notifications_added_with_placeholder_email():
+def test_missing_notifications_never_emit_placeholder_payload():
     b = _budget("m", 1000.0, 800.0)  # no notifications
     r = _only(recommend_budgets([b], as_of=AS_OF))
     assert r["notifications_added"] is True
+    assert r["requires_contacts"] is True
+    assert r["put_body"] is None
+    assert r["command"] is None
+
+
+def test_real_contacts_enable_default_notification_payload():
+    b = _budget("m", 1000.0, 800.0)
+    r = _only(recommend_budgets(
+        [b], as_of=AS_OF, contacts=["team@example.org"],
+    ))
     notifs = r["put_body"]["properties"]["notifications"]
     assert set(notifs) == {"actual_80", "forecasted_100"}
-    assert notifs["actual_80"]["contactEmails"] == ["<your-email@example.com>"]
+    assert notifs["actual_80"]["contactEmails"] == ["team@example.org"]
 
 
 def test_time_period_carried_into_body_when_present():
     tp = {"startDate": "2026-07-01T00:00:00Z", "endDate": "2027-07-01T00:00:00Z"}
     b = _budget("m", 1000.0, 800.0, time_period=tp)
-    r = _only(recommend_budgets([b], as_of=AS_OF))
+    r = _only(recommend_budgets([b], as_of=AS_OF, contacts=["team@example.org"]))
     assert r["put_body"]["properties"]["timePeriod"]["startDate"] == "2026-07-01T00:00:00Z"
 
 

@@ -12,10 +12,9 @@ tells them which are over, which are *forecast* to go over, and which need a dec
 read-only: it reports and recommends, but never creates or edits a budget.
 
 For cost *spikes* and their cause use `finops-cost-anomaly-detection`; for idle/oversized waste use
-`finops-rightsizing-advisor`; for *who owns the spend* use `finops-cost-allocation`. Editing or
-creating budgets is supported separately by the existing advisory, read-only `finops-budget-editor`:
-it recommends an amount and prints an exact PUT command for a human to run, but never executes the
-write. This governance skill only reads.
+`finops-rightsizing-advisor`; for *who owns the spend* use `finops-cost-allocation`. Recommendations
+and deterministic create/update plans with a human-run script are supported separately by
+`finops-budget-editor`. Both skills remain agent-side read-only.
 
 ## Required access
 
@@ -29,8 +28,8 @@ write. This governance skill only reads.
 Evaluates every budget returned by the budgets GET at the requested scope (subscription or a resource
 group). It is **service-agnostic** — it works off the budget objects Azure returns, not a hard-coded
 resource list. A budget with **no budgets defined** is a first-class result: the skill reports "no
-budgets defined" and points to the advisory `finops-budget-editor`, which can recommend a budget and
-print a PUT command for a human to run without executing it, rather than failing silently. Azure's
+budgets defined" and points to `finops-budget-editor`, which can recommend a budget or generate a
+reviewable create plan and human-run script, rather than failing silently. Azure's
 own `forecastSpend` is preferred when present; when it is absent (it often is on the GET response)
 the skill computes a **linear run-rate** month-end forecast in-sandbox and labels the source.
 Multi-currency portfolios and management-group rollups are out of scope until needed.
@@ -96,6 +95,5 @@ Produce a **budget status table** (name, scope, amount, spent + `pct_used`, fore
 the action items (with their reason). List each budget's **breached notification thresholds**. If a
 forecast is `run-rate` (not Azure's), say so — it is an estimate. If a budget's `current_spend` is `0`
 on a newly created budget, note it may be an unsynced value rather than real zero spend. If **no
-budgets are defined**, say that plainly and point to the advisory, read-only `finops-budget-editor`;
-it can recommend an amount and print the PUT command for a human to run, but never executes the
-write. If every budget is `on_track`, say so in one line.
+budgets are defined**, say that plainly and point to `finops-budget-editor` for a recommendation or
+a deterministic create plan and human-run script. If every budget is `on_track`, say so in one line.

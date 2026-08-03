@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "finops",
-      "description": "FinOps pack for Azure SRE Agent: eight read-only skills, a standalone FinOps investigator agent, and scheduled cost reviews and Live Reports.",
+      "description": "Read-only FinOps pack for Azure SRE Agent: eight skills, an autonomous investigator, and scheduled reviews. Budget planning can generate a governed shell script for a human to review and run manually.",
       "source": "./plugins/finops"
     }
   ]

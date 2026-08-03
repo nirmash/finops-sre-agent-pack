@@ -1,9 +1,9 @@
 # FinOps Plugin
 
 FinOps capabilities for Azure SRE Agent, delivered as **eight skills + one agent + eight scheduled tasks** —
-no changes to the SRE Agent product. Skills compose existing read-only Azure tools
-(`RunAzCliReadCommands`, Resource Graph, Azure Monitor), the GitHub connector, and in-sandbox
-Python (`ExecutePythonCode`).
+no changes to the SRE Agent product. The agent and every scheduled task use read-only Azure tools.
+Budget planning can produce a governed shell script for a human to review, save, and run manually;
+the agent never executes it.
 
 ## Skills
 
@@ -13,10 +13,25 @@ Python (`ExecutePythonCode`).
 | [`finops-rightsizing-advisor`](skills/finops-rightsizing-advisor/SKILL.md) | Advisor cost recs + live utilization + inventory → ranked rightsizing / idle-cleanup recommendations (incl. idle Azure Container Apps environments, always-on apps, and warm session pools with no traffic, plus a cost-led sweep so no high-spend resource is missed), validated against real utilization and cost | ✅ Wave 1 — validated live |
 | [`finops-cost-allocation`](skills/finops-cost-allocation/SKILL.md) | Join cost line items with tags → showback by any dimension; **tag-generic** (inventories the tag keys you actually use and reports coverage against a recommended `team/env/service/costCenter/app/owner` set rather than hard-coding it); explicit unallocated bucket + ranked untagged spend (no tags at all) + tag-hygiene flags | ✅ Wave 2 — offline-tested |
 | [`finops-budget-governance`](skills/finops-budget-governance/SKILL.md) | Read native Azure budgets (`GET Microsoft.Consumption/budgets`) → evaluate each against amount + its own notification thresholds; Azure `forecastSpend` when present, else a client-side run-rate month-end forecast; ranks over / forecast-over / at-risk budgets and flags process gates. Handles the no-budgets-defined case. | ✅ Wave 2 — offline-tested |
-| [`finops-budget-editor`](skills/finops-budget-editor/SKILL.md) | **Advisory** budget right-sizing: read native budgets → recommend an amount (`max(current, forecast) × 1.15`, reusing the run-rate forecast) and render the exact `az rest --method put` command for a human to run. **Stays read-only** — it prints the write command but never executes it; applying it needs Cost Management Contributor. | ✅ Wave 2 — offline-tested |
+| [`finops-budget-editor`](skills/finops-budget-editor/SKILL.md) | Advisory recommendations plus deterministic create/update plans for subscription, resource-group, and management-group budgets; Monthly/Quarterly/Annually; explicit or UsageDetails-derived amount; filter preservation and real-contact validation. Produces a governed human-run script with confirmation and read-back verification. | ✅ planning — offline-tested |
 | [`finops-cost-optimization-report`](skills/finops-cost-optimization-report/SKILL.md) | **Executive rollup** — bundles the four read-only analyses (anomalies, rightsizing, cost allocation, budgets) into one headline, a single dollar-ranked priorities list (each item labelled by `impact_type` so savings, overruns, spikes, and governance dollars are never summed together), and per-section detail. Reuses existing signals only — no new data source. Read-only. | ✅ Wave 3 — offline-tested |
 | [`finops-for-ai`](skills/finops-for-ai/SKILL.md) | Attribute Azure AI spend per resource / model / service family from the existing UsageDetails pull. Scopes by **`ConsumedService == Microsoft.CognitiveServices`** (captures both classic Azure OpenAI `kind=OpenAI` **and** Azure AI Foundry `kind=AIServices` accounts — see the AI resource taxonomy note below) **plus `Microsoft.MachineLearningServices`** (Foundry hub/project compute, managed online endpoints, fine-tuning), splits token/model meters from compute meters, ranks top drivers, and emits light read-only hints. | ✅ Wave 3 — offline-tested |
 | [`finops-cost-vs-reliability`](skills/finops-cost-vs-reliability/SKILL.md) | Join monthly UsageDetails cost with alerts (primary reliability pain), Resource Health unavailable/degraded events, and Advisor HighAvailability recommendations → per-resource ranking, per-service rollup, high-pain/low-spend HA investment candidates, and high-spend/no-pain verify-before-cutting hints. Read-only weighted-count scoring. | ✅ Wave 4 — offline-tested |
+
+## Governed budget planning
+
+`finops-budget-editor` can plan one scope-wide budget create/update at a subscription, resource
+group, or management group for `Monthly`, `Quarterly`, or `Annually`. It preserves existing filters
+and settings on update, rejects filters on create, requires real notification contacts (default
+Actual 80% + Forecasted 100%), and never emits a placeholder-bearing command or script. Amounts may
+be explicit or derived from bounded UsageDetails ActualCost period totals plus headroom.
+
+The output includes a shell-safe application script with exact target/body, an exact preflight GET,
+an exact confirmation phrase, an atomic conditional PUT (`If-Match` eTag for update or
+`If-None-Match=*` for create), and post-write GET comparison that exits nonzero on mismatch.
+The human runs it under their own Azure CLI identity and existing Cost Management Contributor access.
+The pack does not execute the script, expose a write tool, grant write RBAC, or plan delete, bulk,
+filtered-create, or scheduled mutations.
 
 ## Roadmap & backlog
 
@@ -33,10 +48,10 @@ Engineering wave order is complete: Wave 1 anomaly + rightsizing, Wave 2 allocat
 
 ## Agent
 
-The API installer also creates **`finops-investigator`**, a standalone autonomous agent configured
-with the eight FinOps skills, the built-in Live Report authoring skill, and an explicit read-only
-tool set. It is the default execution target for all eight scheduled tasks and can also be selected
-directly for interactive FinOps investigations. Existing agents are not modified.
+The API installer also creates **`finops-investigator`**, a standalone autonomous, read-only agent
+configured with the eight FinOps skills and the built-in Live Report authoring skill. It is the
+default execution target for all eight scheduled tasks. Budget planning may return a human-run
+script, but the agent and scheduled tasks never execute it. Existing agents are not modified.
 
 GitHub correlation and email delivery depend on connector tools already configured on the target
 SRE Agent. Attach them during installation with `FINOPS_MCP_TOOLS` (comma-separated MCP tool
@@ -76,7 +91,7 @@ SRE Agent's managed identity.
 | Grant | Needed for | Command |
 |-------|-----------|---------|
 | **Cost Management Reader** | All cost skills (`costInUSD` is null without it) | `az role assignment create --assignee <AGENT_MI_OBJECT_ID> --role "Cost Management Reader" --scope /subscriptions/<SUB_ID>` |
-| **Cost Management Contributor** *(write)* | **Not used by the pack.** `finops-budget-editor` is advisory — it prints an `az rest --method put` command but never runs it. A person needs this role only to **apply** that command themselves. No skill in the pack calls a write API. | `az role assignment create --assignee <YOUR_PRINCIPAL> --role "Cost Management Contributor" --scope /subscriptions/<SUB_ID>` |
+| **Cost Management Contributor** *(write)* | Needed only by a human who chooses to run a generated budget application script. The pack, agent, and installer do not use or grant this role. | Grant out-of-band at the exact budget scope according to your governance process. |
 | **Log Analytics Reader** + `api.loganalytics.io` scope | Pod/namespace-level AKS rightsizing (Container Insights KQL) | Grant the role on the workspace and allowlist the scope for the MI |
 
 ## Why read-only `az` is sufficient for cost
@@ -120,7 +135,7 @@ MI_OBJECT_ID=<agent-mi-object-id> AGENT_RESOURCE_ID=<id> ./install-api.sh
 Configuration (all optional, shown with defaults): `AGENT_RESOURCE_ID`/`ENDPOINT`,
 `MARKETPLACE_NAME=finops-pack`, `PLUGIN_NAME=finops`, `REPO_SLUG=nirmash/finops-sre-agent-pack`,
 `GITHUB_PAT`, `FINOPS_AGENT_NAME=finops-investigator`, `TASK_AGENT_NAME=finops-investigator`,
-`FINOPS_EXTRA_TOOLS`, `FINOPS_MCP_TOOLS`, `FINOPS_CONNECTORS`, `TASK_NAME`,
+`FINOPS_MCP_TOOLS`, `FINOPS_CONNECTORS`, `TASK_NAME`,
 `CRON="0 14 * * *"` (daily 14:00 UTC), `RIGHTSIZE_TASK_NAME`,
 `RIGHTSIZE_CRON="0 15 * * 1"` (Mon 15:00 UTC), `REPORT_TASK_NAME`, `REPORT_CRON="0 14 * * *"`
 (daily Cost Overview Live Report), `RIGHTSIZE_REPORT_TASK_NAME`, `RIGHTSIZE_REPORT_CRON="0 15 * * 1"`
@@ -132,9 +147,15 @@ Configuration (all optional, shown with defaults): `AGENT_RESOURCE_ID`/`ENDPOINT
 `AGENT_NAME` (legacy alias for `TASK_AGENT_NAME`), `SUB_ID`, `ALERT_EMAIL`, `GITHUB_REPO`,
 `MI_OBJECT_ID`.
 
-`FINOPS_EXTRA_TOOLS`, `FINOPS_MCP_TOOLS`, and `FINOPS_CONNECTORS` accept comma-separated names and
-are appended to the investigator's strict default configuration. Invalid names fail the agent
-dry-run instead of silently falling back to another agent.
+`FINOPS_MCP_TOOLS` and `FINOPS_CONNECTORS` accept comma-separated connector integrations. They do
+not modify the fixed core Azure/report tool list in the manifest. `FINOPS_EXTRA_TOOLS` is obsolete
+and the installer rejects it when nonempty so an Azure write tool cannot be appended. Invalid
+connector names fail the agent dry-run instead of silently falling back to another agent. Connector
+integrations remain separate from the core tool list and should be limited to non-Azure-write
+correlation or delivery capabilities; the agent instructions still prohibit Azure mutations.
+Custom agent manifests are also checked: `properties.tools` must equal exactly
+`RunAzCliReadCommands`, `ExecutePythonCode`, `ListReports`, `GetReport`, and `SaveReport` (order is
+normalized). Missing or extra core tools stop installation with a read-only Azure safety error.
 
 The scheduled-task update API cannot change an existing task's agent target. On the first upgrade
 from an older installation, the installer therefore replaces each FinOps-owned task whose target is
@@ -162,12 +183,12 @@ What the API installer sets up:
 
 | Component | What / where |
 |-----------|--------------|
-| **Agent** `finops-investigator` | standalone autonomous FinOps agent from [`agents/finops-investigator.json`](agents/finops-investigator.json); read-only core tools, explicit skill allowlist, and the default target for all bundled tasks |
+| **Agent** `finops-investigator` | standalone autonomous read-only FinOps agent with an explicit skill/tool allowlist; default target for all bundled tasks |
 | **Skill** `finops-cost-anomaly-detection` | the whole skill dir `skills/finops-cost-anomaly-detection/` (SKILL.md + `detect.py`) |
 | **Skill** `finops-rightsizing-advisor` | the whole skill dir `skills/finops-rightsizing-advisor/` (SKILL.md + `rightsize.py`) |
 | **Skill** `finops-cost-allocation` | the whole skill dir `skills/finops-cost-allocation/` (SKILL.md + `allocate.py`) |
 | **Skill** `finops-budget-governance` | the whole skill dir `skills/finops-budget-governance/` (SKILL.md + `budget.py`) |
-| **Skill** `finops-budget-editor` | the whole skill dir `skills/finops-budget-editor/` (SKILL.md + `recommend.py`); advisory and read-only, it prints a PUT command but never executes it |
+| **Skill** `finops-budget-editor` | the whole skill dir `skills/finops-budget-editor/` (SKILL.md + `recommend.py`); deterministic recommendation/proposal builder and governed human-run application script generator |
 | **Skill** `finops-cost-optimization-report` | the whole skill dir `skills/finops-cost-optimization-report/` (SKILL.md + `summarize.py`) |
 | **Skill** `finops-for-ai` | the whole skill dir `skills/finops-for-ai/` (SKILL.md + `attribute.py`) |
 | **Skill** `finops-cost-vs-reliability` | the whole skill dir `skills/finops-cost-vs-reliability/` (SKILL.md + `reliability.py`) |
@@ -314,5 +335,5 @@ The skills' logic is pure Python and offline-testable (`detect.py`, `rightsize.p
 
 ```bash
 pip install -r requirements-dev.txt
-pytest tests/          # 120 tests: 8 anomaly, 30 rightsizing, 13 cost-allocation, 14 budget-governance, 15 budget-editor, 9 cost-optimization, 15 finops-for-ai, 16 cost-vs-reliability
+pytest tests/          # 204 offline tests, including 78 budget recommendation/proposal/script tests
 ```

@@ -1,6 +1,6 @@
 {
   "name": "finops",
-  "description": "FinOps pack for Azure SRE Agent: eight read-only skills plus an installer-managed finops-investigator agent and scheduled reports. Composes existing Azure tools, optional connectors, and in-sandbox Python; no agent core changes required.",
+  "description": "Read-only FinOps pack for Azure SRE Agent: eight skills, an autonomous finops-investigator agent, and scheduled reports. Budget planning can generate a validated shell script for a human to review and run manually; the agent executes no Azure writes and grants no write RBAC.",
   "license": "MIT",
   "skills": ["skills/"]
 }

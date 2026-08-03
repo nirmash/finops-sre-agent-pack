@@ -45,7 +45,6 @@ SOURCE_FORMAT="${SOURCE_FORMAT:-copilot}"
 GITHUB_PAT="${GITHUB_PAT:-}"                      # set for a private repo; else host-default identity
 FINOPS_AGENT_NAME="${FINOPS_AGENT_NAME:-finops-investigator}"
 FINOPS_AGENT_MANIFEST="${FINOPS_AGENT_MANIFEST:-$SCRIPT_DIR/agents/finops-investigator.json}"
-FINOPS_EXTRA_TOOLS="${FINOPS_EXTRA_TOOLS:-}"       # comma-separated registered tool names
 FINOPS_MCP_TOOLS="${FINOPS_MCP_TOOLS:-}"           # comma-separated connector/tool identifiers
 FINOPS_CONNECTORS="${FINOPS_CONNECTORS:-}"         # comma-separated connector names
 
@@ -93,6 +92,8 @@ az account show >/dev/null 2>&1 || die "Not logged in to Azure. Run 'az login' f
 case "$FINOPS_AGENT_NAME" in
   *[!A-Za-z0-9._-]*|'') die "FINOPS_AGENT_NAME must contain only letters, numbers, dot, underscore, or hyphen.";;
 esac
+[ -z "${FINOPS_EXTRA_TOOLS:-}" ] || \
+  die "FINOPS_EXTRA_TOOLS is no longer supported: the FinOps agent core tool set is fixed and read-only."
 
 if [ -z "$ENDPOINT" ]; then
   [ -n "$AGENT_RESOURCE_ID" ] || die "Set ENDPOINT or AGENT_RESOURCE_ID."
@@ -227,7 +228,6 @@ say "Validating agent '$FINOPS_AGENT_NAME'"
 agent_body="$(mktemp)"
 FINOPS_AGENT_NAME="$FINOPS_AGENT_NAME" \
 FINOPS_AGENT_MANIFEST="$FINOPS_AGENT_MANIFEST" \
-FINOPS_EXTRA_TOOLS="$FINOPS_EXTRA_TOOLS" \
 FINOPS_MCP_TOOLS="$FINOPS_MCP_TOOLS" \
 FINOPS_CONNECTORS="$FINOPS_CONNECTORS" \
 python3 - "$agent_body" <<'PY'
@@ -253,7 +253,24 @@ with open(os.environ["FINOPS_AGENT_MANIFEST"]) as handle:
 
 doc["name"] = os.environ["FINOPS_AGENT_NAME"]
 properties = doc.setdefault("properties", {})
-properties["tools"] = append_unique(properties.get("tools"), csv_values("FINOPS_EXTRA_TOOLS"))
+canonical_tools = [
+    "RunAzCliReadCommands",
+    "ExecutePythonCode",
+    "ListReports",
+    "GetReport",
+    "SaveReport",
+]
+configured_tools = properties.get("tools")
+if (
+    not isinstance(configured_tools, list)
+    or len(configured_tools) != len(canonical_tools)
+    or set(configured_tools) != set(canonical_tools)
+):
+    raise SystemExit(
+        "Read-only Azure safety error: properties.tools must contain exactly "
+        + ", ".join(canonical_tools)
+    )
+properties["tools"] = canonical_tools
 properties["mcpTools"] = append_unique(properties.get("mcpTools"), csv_values("FINOPS_MCP_TOOLS"))
 properties["connectors"] = append_unique(properties.get("connectors"), csv_values("FINOPS_CONNECTORS"))
 
@@ -577,6 +594,7 @@ say "Done — FinOps pack installed via the agent API."
 printf '  • Package: 8 skills, 1 agent, 8 tasks, 6 Live Reports\n'
 printf '  • Skills : finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-cost-allocation, finops-budget-governance, finops-budget-editor, finops-cost-optimization-report, finops-for-ai, finops-cost-vs-reliability (from marketplace %s -> %s)\n' "$MARKETPLACE_NAME" "$REPO_SLUG"
 printf '  • Agent  : "%s" (standalone, autonomous, read-only; task target: "%s")\n' "$FINOPS_AGENT_NAME" "$TASK_AGENT_NAME"
+printf '  • Budget planning: advisory proposals may include a human-run script; the agent and installer execute no budget writes and add no budget-write RBAC\n'
 printf '  • Tasks  : "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s); "%s" (%s)\n' \
   "$TASK_NAME" "$CRON" "$RIGHTSIZE_TASK_NAME" "$RIGHTSIZE_CRON" \
   "$REPORT_TASK_NAME" "$REPORT_CRON" "$RIGHTSIZE_REPORT_TASK_NAME" "$RIGHTSIZE_REPORT_CRON" \

@@ -1,4 +1,7 @@
 import json
+import os
+import re
+import subprocess
 from pathlib import Path
 
 
@@ -22,6 +25,31 @@ def _manifest():
     return json.loads(MANIFEST.read_text())
 
 
+def _run_manifest_builder(manifest):
+    installer = INSTALLER.read_text()
+    match = re.search(
+        r'python3 - "\$agent_body" <<\'PY\'\n(.*?)\nPY',
+        installer,
+        flags=re.DOTALL,
+    )
+    assert match
+    env = {
+        **os.environ,
+        "FINOPS_AGENT_MANIFEST": "/dev/stdin",
+        "FINOPS_AGENT_NAME": "finops-investigator",
+        "FINOPS_MCP_TOOLS": "",
+        "FINOPS_CONNECTORS": "",
+    }
+    return subprocess.run(
+        ["python3", "-c", match.group(1), "/dev/stdout"],
+        input=json.dumps(manifest),
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+
+
 def test_manifest_defines_read_only_finops_agent():
     manifest = _manifest()
     properties = manifest["properties"]
@@ -35,7 +63,12 @@ def test_manifest_defines_read_only_finops_agent():
     assert properties["handoffs"] == []
 
     instructions = properties["instructions"].lower()
+    assert "azure execution surface is strictly read-only" in instructions
+    assert "external mcp/connectors have their own scopes" in instructions
     assert "never execute azure post, put, patch, or delete" in instructions
+    assert "never execute that script" in instructions
+    assert "scheduled tasks are always read-only" in instructions
+    assert "never change rbac" in instructions
     assert "human decision" in instructions
 
 
@@ -55,11 +88,7 @@ def test_manifest_core_tools_are_read_only_or_report_scoped():
         "GetReport",
         "SaveReport",
     }
-    assert not any(
-        token in tool.lower()
-        for tool in tools
-        for token in ("write", "delete", "createbudget", "updatebudget")
-    )
+    assert not any("write" in tool.lower() for tool in tools)
 
 
 def test_installer_upserts_agent_before_tasks_and_defaults_tasks_to_it():
@@ -77,3 +106,60 @@ def test_installer_upserts_agent_before_tasks_and_defaults_tasks_to_it():
     assert 'TASK_AGENT_NAME="${TASK_AGENT_NAME:-${AGENT_NAME:-$FINOPS_AGENT_NAME}}"' in script
     assert 'if [ -n "$task_id" ] && [ "$current_agent" != "$TASK_AGENT_NAME" ]' in script
     assert 'api DELETE "/api/v1/scheduledtasks/${task_id}"' in script
+
+
+def test_installer_has_no_write_capability_or_write_rbac():
+    script = INSTALLER.read_text()
+
+    assert "RunAzCliWriteCommands" not in script
+    assert "older/incompatible runtime" not in script
+    assert '--role "Cost Management Contributor"' not in script
+    assert "agent and installer execute no budget writes" in script
+
+
+def test_installer_rejects_obsolete_core_tool_extension_surface():
+    script = INSTALLER.read_text()
+
+    assert (
+        '[ -z "${FINOPS_EXTRA_TOOLS:-}" ] || \\\n'
+        '  die "FINOPS_EXTRA_TOOLS is no longer supported: '
+        'the FinOps agent core tool set is fixed and read-only."'
+    ) in script
+    assert 'FINOPS_EXTRA_TOOLS="$FINOPS_EXTRA_TOOLS"' not in script
+    assert 'csv_values("FINOPS_EXTRA_TOOLS")' not in script
+    assert 'properties["tools"] = append_unique' not in script
+
+
+def test_installer_manifest_builder_normalizes_only_canonical_core_tools():
+    manifest = _manifest()
+    manifest["properties"]["tools"] = list(reversed(manifest["properties"]["tools"]))
+    result = _run_manifest_builder(manifest)
+
+    assert result.returncode == 0, result.stderr
+    built = json.loads(result.stdout)
+    assert built["properties"]["tools"] == [
+        "RunAzCliReadCommands",
+        "ExecutePythonCode",
+        "ListReports",
+        "GetReport",
+        "SaveReport",
+    ]
+
+
+def test_installer_rejects_custom_manifest_with_azure_write_tool():
+    manifest = _manifest()
+    manifest["properties"]["tools"].append("RunAzCliWriteCommands")
+    result = _run_manifest_builder(manifest)
+
+    assert result.returncode != 0
+    assert "Read-only Azure safety error" in result.stderr
+    assert "must contain exactly" in result.stderr
+
+
+def test_installer_rejects_custom_manifest_missing_core_tool():
+    manifest = _manifest()
+    manifest["properties"]["tools"].remove("ExecutePythonCode")
+    result = _run_manifest_builder(manifest)
+
+    assert result.returncode != 0
+    assert "Read-only Azure safety error" in result.stderr

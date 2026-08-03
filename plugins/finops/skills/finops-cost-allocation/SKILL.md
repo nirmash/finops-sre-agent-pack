@@ -37,10 +37,10 @@ exports and management-group rollups are out of scope here until needed.
 ### Step 1 — Pull per-resource monthly cost
 
 Use the **same hardened Consumption UsageDetails pull as `finops-cost-anomaly-detection` Step 1**
-(modern GET in **3-day date-windowed slices** with `\$top=1000`, projecting to just the needed fields
-with `--query` — paginate `nextLink` within each slice, concatenate — which keeps each page under the
-server-side `413 Request Too Large` size cap; halve the slice and drop `\$top` if one still 413s; if a
-slice cannot complete, keep partial rows but label totals "partial — cost pull truncated"). Over the
+(modern GET with `\$top=1000`, minimal `--query` field projection, and complete `nextLink`
+pagination; on `413`, lower `\$top` to `100` then `20`, and use verified short `usageStart` date
+slices only as a final fallback; if the pull cannot complete, keep partial rows but label totals
+"partial — cost pull truncated"). Over the
 trailing ~30 days, aggregate `costInUSD` by resource id into
 `{resourceId: monthly_usd}`. In modern billing the full ARM resource id is in `properties.instanceName`
 (`properties.resourceId` is null) — key on `instanceName`, fall back to `resourceId`. Ids are matched

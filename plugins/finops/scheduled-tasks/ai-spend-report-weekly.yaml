@@ -46,9 +46,11 @@ spec:
 
     This is a SNAPSHOT report, not a connector-backed live report:
     2. Pull the data NOW using the read-only `finops-for-ai` skill. Read its SKILL.md and
-       follow it: pull the modern Consumption UsageDetails line items with the hardened
-       date-windowed GET, PROJECTING the extra fields consumedService + meterSubCategory +
-       meterName (needed to classify AI spend and parse the model), then KEEP ONLY rows whose
+       follow it: pull the modern Consumption UsageDetails line items with bounded `$top`,
+       minimal field projection, and complete `nextLink` pagination; lower `$top` on 413 and
+       use verified date slices only as a final fallback. PROJECT the extra fields
+       consumedService + meterSubCategory + meterName (needed to classify AI spend and parse
+       the model), then KEEP ONLY rows whose
        consumedService is Microsoft.CognitiveServices or Microsoft.MachineLearningServices
        (case-insensitive). Do NOT filter on kind or on a meter category — that would drop
        Foundry AIServices accounts. Do NOT use `az rest --method post` or the Cost Management

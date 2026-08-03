@@ -26,39 +26,39 @@ Use the **modern Consumption UsageDetails GET** (the Cost Management Query/POST 
 blocked by the read-only gate and is **not needed** — detection happens client-side). Request a
 trailing window large enough for a baseline plus the current period (default: 35 days).
 
-**Pull in short date-windowed slices with a bounded page size, and project to only the fields you
-need with `--query`.** Two things matter here, and they solve two different problems:
+**Start with a bounded page size, minimal field projection, and full pagination.** Request the
+trailing window directly with `\$top=1000`, project only the fields the detector needs with
+`--query`, and follow every `nextLink`. Do not lead with `usageStart` slicing: live runs showed that
+the service does not reliably apply that filter, so slicing is a fallback rather than the primary
+retrieval strategy.
 
-1. **Avoiding the server `413 Request Too Large` — use short date slices + bounded `\$top`.** The 413
-   is a **server-side response-size limit**: when the page the Consumption API would return is too
-   large it refuses with 413. The levers that actually shrink what the *server* returns are (a) short
-   date windows and (b) a bounded `\$top`. Walk the trailing window in **3-day slices** bounded by
-   `usageStart`, with `\$top=1000`. Empirically 3-day slices come back around a few hundred KB while a
-   5-day slice trips the 413. `--query` does **not** help here — `az rest` downloads the full response
-   before applying `--query` client-side, so it cannot change the server's decision.
-2. **Keeping the data you retain small — use `--query` field projection.** A full UsageDetails row is
-   large (meter details, billing ids, additionalInfo, …). Project each row down to just the fields the
-   detector needs so the JSON you save and hand to the sandbox stays small and concatenation is cheap.
+The controls solve different problems:
+
+1. **Bounded `\$top` limits each server page.** A `413 Request Too Large` is a server-side response
+   size failure. Start at `\$top=1000`; if the initial request or a `nextLink` returns 413, retry the
+   same request with a smaller page size (`100`, then `20`).
+2. **`--query` keeps retained data small.** It is applied client-side after download, so it cannot by
+   itself prevent a server 413. It does keep the JSON stored, concatenated, and passed to the sandbox
+   limited to the fields the analysis uses.
+3. **Date slicing is the final fallback.** If bounded pages still fail, split the trailing window into
+   short half-open `usageStart` slices, paginate each slice, and de-duplicate the combined rows.
 
 ```bash
-# for each 3-day [SLICE_START, SLICE_END) slice across the window:
-az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&\$top=1000&\$filter=properties/usageStart ge '<SLICE_START>' and properties/usageStart lt '<SLICE_END>'" \
+az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&\$top=1000" \
   --query "{value: value[].{date: properties.date, cost: properties.costInUSD, meterCategory: properties.meterCategory, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName, tags: tags}, nextLink: nextLink}"
 ```
 
-- **3-day slices + `\$top=1000` (primary anti-413):** short windows keep each page under the server
-  size cap and keep pagination shallow so the skip-token offset never grows deep enough to 413 on a
-  later `nextLink`.
-- **Fallbacks if a slice still 413s:** halve the slice (to ~1 day) and/or drop `\$top` (1000 → 100 →
-  20) for that slice only.
+- **Primary anti-413 sequence:** bounded `\$top=1000`; on 413 retry with `100`, then `20`.
 - **`--query` projection (retained-payload hygiene):** keeps only `{date, cost, meterCategory,
   resourceGroup, resourceId, tags}` plus `nextLink`, so the concatenated dataset stays small.
-- **Paginate within each slice:** follow `nextLink` until absent; concatenate all rows across every
-  slice. `nextLink` already carries the skip token — GET it as-is (don't re-add params). Note the
+- **Paginate the complete result:** follow `nextLink` until absent. `nextLink` already carries the
+  skip token — GET it as-is (don't re-add parameters). Note the
   `nextLink` in the raw body is HTML-escaped (`&amp;`) — decode `&amp;`→`&` before following it.
-- **De-dup** by `(resourceId, date, meterId)` when concatenating slices (slice boundaries use a
-  half-open `[ge, lt)` filter, so overlaps shouldn't occur, but de-dup defensively).
-- **Never proceed on silently-partial cost.** If some slice cannot complete even after halving,
+- **Date-slice fallback:** only if smaller pages still 413, retry with short
+  `\$filter=properties/usageStart ge '<SLICE_START>' and properties/usageStart lt '<SLICE_END>'`
+  windows. Because the filter is not reliably applied, verify returned dates and de-duplicate by
+  `(resourceId, date, meterId)` when concatenating.
+- **Never proceed on silently-partial cost.** If the pull cannot complete after all fallbacks,
   keep the rows you have **but explicitly label every downstream total as "partial — cost pull
   truncated, spend understated"** so the numbers aren't trusted as complete.
 - The projected rows already match the shape `detect.py` expects:

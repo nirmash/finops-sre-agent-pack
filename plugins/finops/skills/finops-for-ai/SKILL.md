@@ -48,9 +48,9 @@ resource is flagged to **verify**, not asserted idle.
 ### Step 1 — Pull AI cost line items
 
 Use the **same hardened Consumption UsageDetails pull as `finops-cost-anomaly-detection` Step 1**
-(modern GET in date-windowed slices with `\$top=1000`, `--query` field projection, paginate
-`nextLink`, halve the slice and drop `\$top` on a `413`; label totals "partial" if a slice can't
-complete). Two differences for this skill:
+(modern GET with `\$top=1000`, `--query` field projection, and complete `nextLink` pagination; on
+`413`, lower `\$top` to `100` then `20`, and use verified short `usageStart` date slices only as a
+final fallback; label totals "partial" if the pull cannot complete). Two differences for this skill:
 
 1. **Project the extra fields** the classifier needs — add `consumedService`, `meterSubCategory`,
    and `meterName` on top of the usual cost fields:

@@ -42,17 +42,16 @@ spec:
        {resourceId: {requests_total, sample_days}} — flags unused ACA environments, always-on
        apps with no traffic, and warm session pools with no sessions.
     6. Step 4 (cost): GET Consumption UsageDetails (ActualCost) for ~30 days via
-       `az rest --method get` in 3-day date-windowed slices
-       (`&$filter=properties/usageStart ge 'A' and properties/usageStart lt 'B'`, `&$top=1000`,
-       paginate nextLink within each slice, concatenate), projecting to just the needed fields
-       with `--query "{value: value[].{date: properties.date, cost: properties.costInUSD,
+       `az rest --method get` with `&$top=1000`, projecting to just the needed fields with
+       `--query "{value: value[].{date: properties.date, cost: properties.costInUSD,
        resourceGroup: properties.resourceGroup, resourceId: properties.instanceName, tags: tags},
-       nextLink: nextLink}"`. The 413 is a server-side response-size limit — short 3-day slices +
-       bounded $top keep each page under the cap (a 5-day slice trips it); --query is client-side
-       and does NOT prevent it. If a slice still 413s, halve it (~1 day) and drop
-       $top (1000→100→20). Aggregate costInUSD by
-       resourceId into {resourceId: monthly_usd}. If a slice cannot complete, keep
-       partial rows but label savings totals "partial — cost pull truncated".
+       nextLink: nextLink}"`, and paginate every `nextLink`. If a request 413s, lower `$top`
+       (1000→100→20). Only if bounded pages still fail, use short `usageStart` date slices as a
+       fallback; verify returned dates because the filter is not reliably applied, then
+       de-duplicate combined rows. `--query` is client-side and keeps retained JSON small but
+       does not itself prevent a server 413. Aggregate costInUSD by resourceId into
+       {resourceId: monthly_usd}. If the pull cannot complete, keep partial rows but label
+       savings totals "partial — cost pull truncated".
     7. Step 5 (rank): write the skill's rightsize.py to the sandbox and run
        `recommend_rightsizing(resources=..., utilization=..., activity=..., costs=..., advisor=...)`.
     8. Step 6 (report):

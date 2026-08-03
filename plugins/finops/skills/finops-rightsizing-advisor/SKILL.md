@@ -124,17 +124,16 @@ field is null) — key on `instanceName` and fall back to `resourceId`. Ids are 
 case-insensitively. This is what lets the skill **rank by dollars** and size idle waste. The Cost
 Management Query/POST API is not needed.
 
-**Pull in 3-day date-windowed slices with `\$top=1000`, projecting to just the fields you need with
-`--query`** (`--query "{value: value[].{date: properties.date, cost: properties.costInUSD, resourceGroup:
+Start with the complete trailing window using `\$top=1000`, project only the needed fields with
+`--query "{value: value[].{date: properties.date, cost: properties.costInUSD, resourceGroup:
 properties.resourceGroup, resourceId: properties.instanceName, tags: tags}, nextLink: nextLink}"`,
-`\$filter=properties/usageStart ge 'A' and properties/usageStart lt 'B'`, paginate `nextLink` within each
-slice, concatenate). The `413 Request Too Large` is a **server-side response-size limit** — short date
-slices + a bounded `\$top` are what keep each page under the cap (a 5-day slice trips the 413; 3-day
-comes back manageable). `--query` runs client-side so it does not prevent the 413 — it just keeps the
-retained dataset small for the sandbox. If a slice still 413s, halve it (~1 day) and drop `\$top`
-(1000 → 100 → 20). If a slice still cannot complete, keep partial rows but **label the savings totals
-"partial — cost pull truncated"** so the biggest line items (a warm session pool's full monthly cost
-only shows once its whole window is summed) aren't undercounted silently.
+and paginate every `nextLink`. If a request returns `413 Request Too Large`, retry with `\$top=100`,
+then `20`. Only if bounded pages still fail, use short half-open `usageStart` date slices as a
+fallback; live runs showed that filter is not reliably applied, so verify returned dates and
+de-duplicate the combined rows. `--query` is client-side and does not itself prevent a server 413,
+but it keeps the retained sandbox payload small. If the pull still cannot complete, keep partial rows
+but **label the savings totals "partial — cost pull truncated"** so the biggest line items aren't
+undercounted silently.
 
 ### Step 5 — Rank (bundled rightsize.py, in-sandbox)
 

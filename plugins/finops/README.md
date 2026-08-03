@@ -26,7 +26,7 @@ skill:
 | Item | What | Status |
 |------|------|--------|
 | **Usage examples per skill** | For each shipped skill (`finops-cost-anomaly-detection`, `finops-rightsizing-advisor`, `finops-cost-allocation`, `finops-budget-governance`, `finops-budget-editor`, `finops-cost-optimization-report`, `finops-for-ai`, `finops-cost-vs-reliability`): sample input data, an example invocation, and expected output/report — under each skill folder (an `examples/` dir or an Examples section in `SKILL.md`). Do after the implementation work is complete. | 🔜 planned |
-| **Cost-pull recipe simplification** | Lead the anti-`413` recipe with `$top` + `--query` field projection (the levers that actually shrink the server response); demote date-windowing to a fallback. Live runs showed the `usageStart` slice filter isn't reliably applied, so it's belt-and-suspenders, not primary. | 🔜 planned |
+| **Cost-pull recipe simplification** | Lead with bounded `$top`, minimal `--query` field projection, and complete `nextLink` pagination; lower `$top` on `413`, then use verified date-windowing only as a fallback because the `usageStart` filter is not reliably applied. | ✅ complete |
 | **Make repo public** | Flip the repo to public and drop the install PAT once the pack is ready to share. | 🔜 planned |
 
 Engineering wave order is complete: Wave 1 anomaly + rightsizing, Wave 2 allocation + budgets, Wave 3 executive/AI reports, and Wave 4 `finops-cost-vs-reliability` + Live Report are now built.

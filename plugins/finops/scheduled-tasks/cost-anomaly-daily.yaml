@@ -28,18 +28,17 @@ spec:
 
     1. Load the skill — read its SKILL.md so you use the bundled detector and steps.
     2. Step 1 (pull): GET Consumption UsageDetails (ActualCost) for the last 35 days via
-       `az rest --method get` in 3-day date-windowed slices
-       (`&$filter=properties/usageStart ge 'A' and properties/usageStart lt 'B'`, `&$top=1000`,
-       paginate `nextLink` within each slice, concatenate), projecting to just the needed
-       fields with `--query "{value: value[].{date: properties.date, cost: properties.costInUSD,
+       `az rest --method get` with `&$top=1000`, projecting to just the needed fields with
+       `--query "{value: value[].{date: properties.date, cost: properties.costInUSD,
        meterCategory: properties.meterCategory, resourceGroup: properties.resourceGroup,
-       resourceId: properties.instanceName, tags: tags}, nextLink: nextLink}"`. The 413 Request
-       Too Large is a server-side response-size limit — short 3-day slices + bounded $top keep
-       each page under the cap (a 5-day slice trips it); --query is client-side and does NOT
-       prevent it. If a slice still 413s, halve it (~1 day) and drop $top (1000→100→20).
-       nextLink in the body is HTML-escaped (&amp;) — decode before following. resourceId comes
-       from properties.instanceName, falling back to properties.resourceId (resourceId is
-       null in modern billing). If a slice cannot complete, keep partial rows but label
+       resourceId: properties.instanceName, tags: tags}, nextLink: nextLink}"`, and paginate
+       every `nextLink`. If a request 413s, lower `$top` (1000→100→20). Only if bounded pages
+       still fail, use short `usageStart` date slices as a fallback; verify returned dates
+       because the filter is not reliably applied, then de-duplicate combined rows. `--query`
+       is client-side and keeps retained JSON small but does not itself prevent a server 413.
+       `nextLink` in the body is HTML-escaped (`&amp;`) — decode before following. resourceId
+       comes from properties.instanceName, falling back to properties.resourceId (resourceId
+       is null in modern billing). If the pull cannot complete, keep partial rows but label
        downstream totals "partial — cost pull truncated".
     3. Step 2 (detect): write the skill's embedded detect.py to the sandbox and run
        `detect_anomalies(line_items)` with defaults (baseline_days=28, k=3.0,

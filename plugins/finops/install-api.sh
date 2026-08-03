@@ -15,7 +15,8 @@
 #   4. Upsert the proactive FinOps scheduled tasks       POST/PUT /api/v1/scheduledtasks
 #
 # Caller identity (az login) must hold the agent's ARM write actions
-# (AgentExtendedAgentWrite, AgentScheduledTaskWrite) — the resource owner does.
+# (AgentExtendedAgentWrite, AgentScheduledTaskWrite, and AgentScheduledTaskDelete for the one-time
+# task retarget migration) — the resource owner does.
 #
 # Requires: az (logged in), curl, python3.
 #
@@ -291,14 +292,27 @@ upsert_task() {
   local name="$1" description="$2" cron="$3" prompt="$4"
 
   api GET /api/v1/scheduledtasks; local existing="$RESP_BODY"
-  local task_id
-  task_id="$(printf '%s' "$existing" | TASK_NAME="$name" python3 -c '
+  local task_info task_id current_agent current_status
+  task_info="$(printf '%s' "$existing" | TASK_NAME="$name" python3 -c '
 import json,os,sys
 name=os.environ["TASK_NAME"]
 try: data=json.load(sys.stdin)
 except Exception: data=[]
 tasks=data if isinstance(data,list) else data.get("value",[])
-print(next((t.get("id","") for t in tasks if t.get("name")==name), ""))' 2>/dev/null || true)"
+task=next((t for t in tasks if t.get("name")==name), {})
+print("\t".join((str(task.get("id","")), str(task.get("agent","")), str(task.get("status","")))))' 2>/dev/null || true)"
+  IFS=$'\t' read -r task_id current_agent current_status <<< "$task_info"
+
+  # The v1 scheduled-task PUT contract cannot change Agent. Replace a task once when its
+  # target differs, then subsequent installer runs return to ordinary in-place updates.
+  if [ -n "$task_id" ] && [ "$current_agent" != "$TASK_AGENT_NAME" ]; then
+    warn "Replacing scheduled task '$name' to change agent '$current_agent' -> '$TASK_AGENT_NAME'"
+    api DELETE "/api/v1/scheduledtasks/${task_id}"
+    case "$HTTP_CODE" in
+      200|204) task_id="";;
+      *) die "Task replacement delete failed (HTTP $HTTP_CODE): $RESP_BODY";;
+    esac
+  fi
 
   local body; body="$(mktemp)"
   TASK_NAME="$name" TASK_DESC="$description" CRON="$cron" TASK_AGENT_NAME="$TASK_AGENT_NAME" PROMPT="$prompt" \
@@ -320,7 +334,22 @@ PY
     case "$HTTP_CODE" in 200|201|204) ok "Scheduled task updated: $name ($task_id)";; *) rm -f "$body"; die "Task update failed (HTTP $HTTP_CODE): $RESP_BODY";; esac
   else
     api POST /api/v1/scheduledtasks "$body"
-    case "$HTTP_CODE" in 200|201) ok "Scheduled task created: $name";; *) rm -f "$body"; die "Task create failed (HTTP $HTTP_CODE): $RESP_BODY";; esac
+    case "$HTTP_CODE" in
+      200|201)
+        local created_id
+        created_id="$(printf '%s' "$RESP_BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("taskId",""))' 2>/dev/null || true)"
+        if [ "${current_status,,}" = "paused" ] && [ -n "$created_id" ]; then
+          api POST "/api/v1/scheduledtasks/${created_id}/pause"
+          case "$HTTP_CODE" in
+            200|204) ok "Scheduled task recreated and paused: $name";;
+            *) rm -f "$body"; die "Task recreated but pause restore failed (HTTP $HTTP_CODE): $RESP_BODY";;
+          esac
+        else
+          ok "Scheduled task created: $name"
+        fi
+        ;;
+      *) rm -f "$body"; die "Task create failed (HTTP $HTTP_CODE): $RESP_BODY";;
+    esac
   fi
   rm -f "$body"
 }

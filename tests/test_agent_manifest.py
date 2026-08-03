@@ -75,3 +75,5 @@ def test_installer_upserts_agent_before_tasks_and_defaults_tasks_to_it():
     assert script.index(upsert) < script.index(first_task)
     assert 'FINOPS_AGENT_NAME="${FINOPS_AGENT_NAME:-finops-investigator}"' in script
     assert 'TASK_AGENT_NAME="${TASK_AGENT_NAME:-${AGENT_NAME:-$FINOPS_AGENT_NAME}}"' in script
+    assert 'if [ -n "$task_id" ] && [ "$current_agent" != "$TASK_AGENT_NAME" ]' in script
+    assert 'api DELETE "/api/v1/scheduledtasks/${task_id}"' in script

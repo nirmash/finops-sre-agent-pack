@@ -102,6 +102,8 @@ directly (the same control-plane `srectl` uses) — so it needs only `az` (logge
 (2) installs the `finops` plugin (the server clones the repo and imports all skill dirs —
 `SKILL.md` plus each bundled pure-Python core), (3) dry-run validates and upserts
 `finops-investigator`, and (4) upserts the daily and weekly scheduled tasks. Re-running is safe.
+The caller needs extended-agent and scheduled-task write permissions, plus scheduled-task delete
+permission for the one-time migration of tasks previously targeting another agent.
 
 ```bash
 # Your az-login identity must own ARM write on the agent (the resource owner does).
@@ -133,6 +135,11 @@ Configuration (all optional, shown with defaults): `AGENT_RESOURCE_ID`/`ENDPOINT
 `FINOPS_EXTRA_TOOLS`, `FINOPS_MCP_TOOLS`, and `FINOPS_CONNECTORS` accept comma-separated names and
 are appended to the investigator's strict default configuration. Invalid names fail the agent
 dry-run instead of silently falling back to another agent.
+
+The scheduled-task update API cannot change an existing task's agent target. On the first upgrade
+from an older installation, the installer therefore replaces each FinOps-owned task whose target is
+not `TASK_AGENT_NAME`; it preserves a paused state when recreating it. Later runs update those tasks
+in place as usual.
 
 > Once this repo is public, drop `GITHUB_PAT` — the server clones it with the host's default GitHub
 > identity.

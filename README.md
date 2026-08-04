@@ -61,9 +61,12 @@ AGENT_RESOURCE_ID=/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.A
 ```
 
 The installer grants the agent's user-assigned identity **Reader** on the exact agent ARM resource
-so each run can read `managedResources`. To optionally grant **Cost Management Reader** on each
-currently configured managed scope, also set `MI_OBJECT_ID=<agent-mi-object-id>`. It does not grant
-that role at a parent scope, revoke older broad assignments, or add budget-write permissions.
+so each run can read `managedResources`. To optionally grant **Cost Management Reader** on the
+minimum scopes required by the UsageDetails transport, also set
+`MI_OBJECT_ID=<agent-mi-object-id>`. For an RG-managed boundary, Azure exposes UsageDetails only at
+the containing subscription endpoint, so the role is granted at that subscription while the pack
+still filters and reports only the exact managed RGs. It does not revoke older broad assignments or
+add budget-write permissions.
 `SUB_ID` is deprecated and ignored for scheduled scope. See the
 [FinOps plugin documentation](plugins/finops/README.md#install-everything-recommended) for all
 configuration options and installed components.

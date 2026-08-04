@@ -187,10 +187,12 @@ def test_reader_is_granted_and_verified_at_exact_agent_resource_only():
     ) not in script
 
 
-def test_cost_reader_loops_over_only_normalized_managed_scopes():
+def test_cost_reader_uses_minimum_usage_details_transport_scopes():
     script = _script()
 
-    assert 'for scope in "${MANAGED_SCOPES[@]}"; do' in script
+    assert "COST_READER_SCOPES=()" in script
+    assert 'transport_scope = f"/subscriptions/{match.group(1)}" if match else scope' in script
+    assert 'for scope in "${COST_READER_SCOPES[@]}"; do' in script
     assert (
         'ensure_exact_role_assignment "$MI_OBJECT_ID" '
         '"Cost Management Reader" "$scope"'
@@ -218,6 +220,9 @@ def test_common_scope_preamble_is_exported_and_applied_to_every_task():
     assert 'prompt="${FINOPS_SCOPE_PREAMBLE}"' in script
     assert "rediscover at run time" in script
     assert "every effective scope produced by scope.py" in script
+    assert "Consumption UsageDetails is subscription-scoped transport." in script
+    assert "/resourceGroups/.../providers/Microsoft.Consumption/usageDetails" in script
+    assert "treat the transport subscription as an expanded analysis boundary" in script
     assert "Never infer, add, or substitute a subscription or parent scope." in script
     assert "stop without querying analysis data, sending email, or creating/updating/" in script
     assert "This scheduled task accepts NO override" in script

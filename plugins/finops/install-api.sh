@@ -232,6 +232,31 @@ while IFS= read -r scope; do
 done < <(printf '%s' "$FINOPS_MANAGED_SCOPES_JSON" | python3 -c 'import json,sys; print(*json.load(sys.stdin), sep="\n")')
 [ "${#MANAGED_SCOPES[@]}" -gt 0 ] || die "No normalized managed scopes were discovered."
 
+COST_READER_SCOPES=()
+while IFS= read -r scope; do
+  [ -n "$scope" ] && COST_READER_SCOPES+=("$scope")
+done < <(printf '%s' "$FINOPS_MANAGED_SCOPES_JSON" | python3 -c '
+import json
+import re
+import sys
+
+subscription_scope = re.compile(
+    r"^/subscriptions/([^/]+)(?:/resourceGroups/[^/]+)?$",
+    re.IGNORECASE,
+)
+result = []
+seen = set()
+for scope in json.load(sys.stdin):
+    match = subscription_scope.fullmatch(scope)
+    transport_scope = f"/subscriptions/{match.group(1)}" if match else scope
+    key = transport_scope.casefold()
+    if key not in seen:
+        seen.add(key)
+        result.append(transport_scope)
+print(*result, sep="\n")
+')
+[ "${#COST_READER_SCOPES[@]}" -gt 0 ] || die "No Cost Management transport scopes were derived."
+
 UAMI_RESOURCE_ID="$(printf '%s' "$DISCOVERY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["uamiResourceId"])')"
 UAMI_PRINCIPAL_ID="$(printf '%s' "$DISCOVERY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["inlinePrincipalId"])')"
 if [ -z "$UAMI_PRINCIPAL_ID" ]; then
@@ -256,6 +281,11 @@ email, ListReports/GetReport call, or SaveReport call:
      supports scoped retrieval; paginate each independently, de-duplicate overlaps, filter all
      results against the boundary, and disclose included, excluded, unattributed,
      unsupported, and partial/failed scope coverage.
+   - Consumption UsageDetails is subscription-scoped transport. For RG-only scopes,
+     query each containing subscription endpoint once, paginate it completely, then
+     use scope.py to keep only rows inside the exact managed RGs. Never construct a
+     /resourceGroups/.../providers/Microsoft.Consumption/usageDetails URL, and never
+     treat the transport subscription as an expanded analysis boundary.
    - Never infer, add, or substitute a subscription or parent scope.
    - Installer-time normalized scope snapshot (diagnostic only; rediscover at run time):
      ${FINOPS_MANAGED_SCOPES_JSON}
@@ -264,6 +294,7 @@ export AGENT_RESOURCE_ID FINOPS_MANAGED_SCOPES_JSON FINOPS_SCOPE_PREAMBLE
 
 ok "Endpoint: $ENDPOINT"
 ok "Managed scopes: ${#MANAGED_SCOPES[@]}"
+ok "Cost Management transport scopes: ${#COST_READER_SCOPES[@]}"
 ok "Agent UAMI principal: $UAMI_PRINCIPAL_ID"
 
 TOKEN="$(az account get-access-token --resource "$TOKEN_RESOURCE" --query accessToken -o tsv)" \
@@ -341,13 +372,13 @@ ensure_exact_role_assignment() {
 say "Agent resource Reader RBAC"
 ensure_exact_role_assignment "$UAMI_PRINCIPAL_ID" "Reader" "$AGENT_RESOURCE_ID"
 
-say "Managed-scope Cost Management Reader RBAC"
+say "Cost Management transport Reader RBAC"
 if [ -n "$MI_OBJECT_ID" ]; then
-  for scope in "${MANAGED_SCOPES[@]}"; do
+  for scope in "${COST_READER_SCOPES[@]}"; do
     ensure_exact_role_assignment "$MI_OBJECT_ID" "Cost Management Reader" "$scope"
   done
 else
-  warn "MI_OBJECT_ID not set — skipping Cost Management Reader grants on managed scopes."
+  warn "MI_OBJECT_ID not set — skipping Cost Management Reader grants on transport scopes."
   warn "The required Reader grant on the agent resource was still enforced."
 fi
 
@@ -439,11 +470,43 @@ done
 
 # ---- 4. Upsert the FinOps investigator agent -------------------------------
 say "Validating agent '$FINOPS_AGENT_NAME'"
+api GET "/api/v1/extendedAgent/systemtools?stableOnly=false"
+case "$HTTP_CODE" in
+  200) ;;
+  *) die "Could not list runtime system tools (HTTP $HTTP_CODE): $RESP_BODY";;
+esac
+FINOPS_PYTHON_TOOL="$(printf '%s' "$RESP_BODY" | python3 -c '
+import json
+import sys
+
+doc = json.load(sys.stdin)
+items = doc if isinstance(doc, list) else doc.get("data", doc.get("value", []))
+names = {
+    item.get("name")
+    for item in items
+    if isinstance(item, dict) and isinstance(item.get("name"), str)
+}
+required = {"RunAzCliReadCommands", "ListReports", "GetReport", "SaveReport"}
+missing = sorted(required - names)
+if missing:
+    raise SystemExit("Missing required FinOps system tools: " + ", ".join(missing))
+if "ExecutePythonCode" in names:
+    print("ExecutePythonCode")
+elif "RunInTerminal" in names:
+    print("RunInTerminal")
+else:
+    raise SystemExit(
+        "Missing sandbox execution tool: expected ExecutePythonCode or RunInTerminal"
+    )
+')" || die "Runtime tool compatibility check failed."
+ok "Sandbox execution tool: $FINOPS_PYTHON_TOOL"
+
 agent_body="$(mktemp)"
 FINOPS_AGENT_NAME="$FINOPS_AGENT_NAME" \
 FINOPS_AGENT_MANIFEST="$FINOPS_AGENT_MANIFEST" \
 FINOPS_MCP_TOOLS="$FINOPS_MCP_TOOLS" \
 FINOPS_CONNECTORS="$FINOPS_CONNECTORS" \
+FINOPS_PYTHON_TOOL="$FINOPS_PYTHON_TOOL" \
 AGENT_RESOURCE_ID="$AGENT_RESOURCE_ID" \
 python3 - "$agent_body" <<'PY'
 import json
@@ -468,7 +531,7 @@ with open(os.environ["FINOPS_AGENT_MANIFEST"]) as handle:
 
 doc["name"] = os.environ["FINOPS_AGENT_NAME"]
 properties = doc.setdefault("properties", {})
-canonical_tools = [
+manifest_tools = [
     "RunAzCliReadCommands",
     "ExecutePythonCode",
     "ListReports",
@@ -478,14 +541,23 @@ canonical_tools = [
 configured_tools = properties.get("tools")
 if (
     not isinstance(configured_tools, list)
-    or len(configured_tools) != len(canonical_tools)
-    or set(configured_tools) != set(canonical_tools)
+    or len(configured_tools) != len(manifest_tools)
+    or set(configured_tools) != set(manifest_tools)
 ):
     raise SystemExit(
         "Read-only Azure safety error: properties.tools must contain exactly "
-        + ", ".join(canonical_tools)
+        + ", ".join(manifest_tools)
     )
-properties["tools"] = canonical_tools
+python_tool = os.environ["FINOPS_PYTHON_TOOL"]
+if python_tool not in {"ExecutePythonCode", "RunInTerminal"}:
+    raise SystemExit("Unsupported sandbox execution tool: " + python_tool)
+properties["tools"] = [
+    "RunAzCliReadCommands",
+    python_tool,
+    "ListReports",
+    "GetReport",
+    "SaveReport",
+]
 properties["mcpTools"] = append_unique(properties.get("mcpTools"), csv_values("FINOPS_MCP_TOOLS"))
 properties["connectors"] = append_unique(properties.get("connectors"), csv_values("FINOPS_CONNECTORS"))
 instructions = properties.get("instructions")
@@ -516,6 +588,11 @@ if not isinstance(configured_skills, list) or not required_skills <= set(configu
     )
 for placeholder in placeholders:
     instructions = instructions.replace(placeholder, os.environ["AGENT_RESOURCE_ID"])
+if python_tool == "RunInTerminal":
+    instructions = instructions.replace(
+        "use RunAzCliReadCommands and sandbox Python for analysis",
+        "use RunAzCliReadCommands and RunInTerminal for sandbox Python analysis",
+    )
 properties["instructions"] = instructions
 
 with open(sys.argv[1], "w") as handle:

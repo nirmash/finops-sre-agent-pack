@@ -26,7 +26,7 @@ def _manifest():
     return json.loads(MANIFEST.read_text())
 
 
-def _run_manifest_builder(manifest):
+def _run_manifest_builder(manifest, python_tool="ExecutePythonCode"):
     installer = INSTALLER.read_text()
     match = re.search(
         r'python3 - "\$agent_body" <<\'PY\'\n(.*?)\nPY',
@@ -40,6 +40,7 @@ def _run_manifest_builder(manifest):
         "FINOPS_AGENT_NAME": "finops-investigator",
         "FINOPS_MCP_TOOLS": "",
         "FINOPS_CONNECTORS": "",
+        "FINOPS_PYTHON_TOOL": python_tool,
         "AGENT_RESOURCE_ID": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/agents/agent",
     }
     return subprocess.run(
@@ -153,6 +154,29 @@ def test_installer_manifest_builder_normalizes_only_canonical_core_tools():
         "GetReport",
         "SaveReport",
     ]
+
+
+def test_installer_manifest_builder_uses_terminal_fallback_when_selected():
+    result = _run_manifest_builder(_manifest(), python_tool="RunInTerminal")
+
+    assert result.returncode == 0, result.stderr
+    built = json.loads(result.stdout)
+    assert built["properties"]["tools"] == [
+        "RunAzCliReadCommands",
+        "RunInTerminal",
+        "ListReports",
+        "GetReport",
+        "SaveReport",
+    ]
+    assert "RunInTerminal for sandbox Python analysis" in built["properties"]["instructions"]
+    assert "RunAzCliWriteCommands" not in built["properties"]["tools"]
+
+
+def test_installer_manifest_builder_rejects_unknown_python_tool():
+    result = _run_manifest_builder(_manifest(), python_tool="RunShell")
+
+    assert result.returncode != 0
+    assert "Unsupported sandbox execution tool" in result.stderr
 
 
 def test_installer_manifest_builder_injects_agent_resource_id():

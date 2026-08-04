@@ -99,6 +99,15 @@ become a standing permission.
 
 ## 4. Filter UsageDetails before analysis
 
+Consumption UsageDetails uses a **subscription-scoped transport endpoint**. For a
+subscription effective scope, query that subscription directly. For one or more RG-only
+effective scopes, query each distinct containing subscription once, paginate the complete
+result, and then apply `filter_usage_details` to retain only rows inside the exact managed
+resource groups. Never construct
+`/resourceGroups/<rg>/providers/Microsoft.Consumption/usageDetails`; that endpoint is not
+supported. Querying the containing subscription is transport only and does not broaden the
+logical analysis boundary.
+
 ```python
 coverage = filter_usage_details(
     usage_rows,

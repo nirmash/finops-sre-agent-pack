@@ -115,13 +115,14 @@ and can optionally apply the second to the SRE Agent's managed identity.
 | Grant | Needed for | Command |
 |-------|-----------|---------|
 | **Reader on the exact agent ARM resource** | Every run must read the current `knowledgeGraphConfiguration.managedResources` | Automatically granted and verified by `install-api.sh`; the installing identity needs role-assignment permission at `AGENT_RESOURCE_ID` |
-| **Cost Management Reader on each managed scope** *(optional installer grant)* | Cost skills (`costInUSD` is null without suitable access) | Set `MI_OBJECT_ID=<AGENT_MI_OBJECT_ID>` during installation; the installer grants and verifies the role separately at each configured subscription, resource-group, or management-group scope |
+| **Cost Management Reader on each UsageDetails transport scope** *(optional installer grant)* | Cost skills (`costInUSD` is null without suitable access) | Set `MI_OBJECT_ID=<AGENT_MI_OBJECT_ID>` during installation. Subscription scopes remain subscription-scoped; RG scopes require the containing subscription because Consumption UsageDetails has no RG endpoint; management-group scopes remain management-group-scoped. |
 | **Cost Management Contributor** *(write)* | Needed only by a human who chooses to run a generated budget application script. The pack, agent, and installer do not use or grant this role. | Grant out-of-band at the exact budget scope according to your governance process. |
 | **Log Analytics Reader** + `api.loganalytics.io` scope | Pod/namespace-level AKS rightsizing (Container Insights KQL) | Grant the role on the workspace and allowlist the scope for the MI |
 
-The installer never grants Cost Management Reader at an inferred parent scope. Existing inherited
-or broad role assignments may still permit Azure reads, but they do not broaden the FinOps logical
-boundary. Old broad assignments are not revoked automatically.
+For an RG-managed boundary, the subscription-level Cost Management Reader grant is transport access
+only. Every row is still filtered against the exact managed RG boundary, and included, excluded,
+and unattributed coverage is disclosed. Existing inherited or broad role assignments likewise do
+not broaden the FinOps logical boundary. Old broad assignments are not revoked automatically.
 
 ## Why read-only `az` is sufficient for cost
 
@@ -161,7 +162,7 @@ AGENT_RESOURCE_ID=/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.A
 # While this repo is private, pass a GitHub PAT so the server can clone it:
 GITHUB_PAT=$(gh auth token) AGENT_RESOURCE_ID=<id> ./install-api.sh
 
-# Also grant Cost Management Reader at every current managed scope:
+# Also grant Cost Management Reader at every required UsageDetails transport scope:
 MI_OBJECT_ID=<agent-mi-object-id> AGENT_RESOURCE_ID=<id> ./install-api.sh
 ```
 
@@ -182,6 +183,17 @@ Configuration: required `AGENT_RESOURCE_ID`; optional `ENDPOINT` (consistency ch
 
 `SUB_ID` is deprecated and ignored. Scheduled scope comes only from the current
 `managedResources` value read through `AGENT_RESOURCE_ID`.
+
+The installer detects the sandbox execution tool exposed by the target runtime. It prefers
+`ExecutePythonCode` and safely falls back to `RunInTerminal` for bundled Python analysis; Azure
+execution remains limited to `RunAzCliReadCommands`, and no Azure write tool is added.
+
+Some V2 Agent Loop builds persist custom agents through the management API but do not resolve them
+as interactive or scheduled home agents. Until that runtime regression is fixed, keep V2 enabled
+and set `TASK_AGENT_NAME=<base-agent-name>` during installation so scheduled FinOps work runs on the
+base agent; use the installed FinOps skills directly for interactive work. The strict managed-scope
+task prompts still apply, but the base agent may expose additional tools, so this fallback does not
+provide the dedicated custom agent's tool-level isolation.
 
 `FINOPS_MCP_TOOLS` and `FINOPS_CONNECTORS` accept comma-separated connector integrations. They do
 not modify the fixed core Azure/report tool list in the manifest. `FINOPS_EXTRA_TOOLS` is obsolete
@@ -223,7 +235,7 @@ What the API installer sets up:
 | **Live Report** `FinOps: Cost Optimization` (weekly) | driven by [`scheduled-tasks/cost-optimization-report-weekly.yaml`](scheduled-tasks/cost-optimization-report-weekly.yaml) — the executive rollup dashboard (headline, a single dollar-ranked priorities list, and per-section detail across anomalies, rightsizing, allocation, and budgets from `finops-cost-optimization-report`) in Operations Hub, re-versioned weekly |
 | **Live Report** `FinOps: AI Spend` (weekly) | driven by [`scheduled-tasks/ai-spend-report-weekly.yaml`](scheduled-tasks/ai-spend-report-weekly.yaml) — an Azure AI cost dashboard (total AI spend, per-model + per-resource breakdowns, token-vs-compute split, top drivers, and read-only hints from `finops-for-ai`; covers Azure OpenAI + AI Foundry + ML) in Operations Hub, re-versioned weekly |
 | **Live Report** `FinOps: Cost vs Reliability` (weekly) | driven by [`scheduled-tasks/cost-vs-reliability-report-weekly.yaml`](scheduled-tasks/cost-vs-reliability-report-weekly.yaml) — a cost-vs-reliability dashboard (spend + pain table, service rollup, HA investment candidates, verify-before-cutting candidates, and data-quality notes from `finops-cost-vs-reliability`) in Operations Hub, re-versioned weekly |
-| **RBAC** | Reader on the exact agent ARM resource; optionally Cost Management Reader on each current managed scope when `MI_OBJECT_ID` is set |
+| **RBAC** | Reader on the exact agent ARM resource; optionally Cost Management Reader on each required UsageDetails transport scope when `MI_OBJECT_ID` is set |
 
 The agent is upserted separately from the plugin installation because the runtime plugin importer
 currently owns skills, not agent configurations. Uninstalling the plugin therefore does not delete
@@ -307,7 +319,7 @@ inlining is needed). This is the cleaner long-term path.
 ### RBAC prerequisite
 
 Before either manual skill install works end-to-end, grant **Reader** on the agent ARM resource and
-appropriate **Cost Management Reader** access on each managed scope (see Prerequisites above) —
+appropriate **Cost Management Reader** access on each UsageDetails transport scope (see Prerequisites above) —
 otherwise scope discovery fails or `costInUSD` is null and no cost data flows.
 
 ## Validation status

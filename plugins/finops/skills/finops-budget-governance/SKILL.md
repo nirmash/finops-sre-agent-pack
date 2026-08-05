@@ -1,6 +1,6 @@
 ---
 name: finops-budget-governance
-description: Proactive budget governance for Azure, read-only. Reads native Azure Cost Management budgets (GET Microsoft.Consumption/budgets — amount, currentSpend, and forecastSpend when present) and evaluates each against its amount and its own notification thresholds; where Azure supplies no forecast it computes a linear run-rate month-end projection in-sandbox, so every budget gets a landing estimate. Surfaces budgets that are over, forecast-to-exceed, or at-risk, ranks them by severity, and flags the ones that warrant a process gate (a human decision before more is spent) — using the bundled budget.py (run in-sandbox via ExecutePythonCode). Use for "are we on budget", burn-rate / forecast checks, and month-end overrun early warning.
+description: Proactive budget governance for Azure, read-only. Reads native Azure Cost Management budgets (GET Microsoft.Consumption/budgets — amount, currentSpend, and forecastSpend when present) and evaluates each against its amount and its own notification thresholds; where Azure supplies no forecast it computes a linear run-rate month-end projection in-sandbox, so every budget gets a landing estimate. Surfaces budgets that are over, forecast-to-exceed, or at-risk, ranks them by severity, and flags the ones that warrant a process gate (a human decision before more is spent) — using the bundled budget.py with the runtime's sandbox Python tool. Use for "are we on budget", burn-rate / forecast checks, and month-end overrun early warning.
 ---
 
 ## When to use this skill
@@ -20,8 +20,8 @@ and deterministic create/update plans with a human-run script are supported sepa
 
 - **Cost Management Reader** (or **Reader**) on the subscription — enough to `GET
   Microsoft.Consumption/budgets`. No write role is needed or used.
-- Read-only `az` (`RunAzCliReadCommands`) and `ExecutePythonCode` (in-sandbox evaluation). No
-  POST/PUT/write APIs are called.
+- Read-only `az` (`RunAzCliReadCommands`) and sandbox Python: use `ExecutePythonCode` when
+  available, otherwise `RunInTerminal` with `python3`. No POST/PUT/write APIs are called.
 
 ## Scope
 

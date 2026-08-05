@@ -1,6 +1,6 @@
 ---
 name: finops-cost-vs-reliability
-description: FinOps cost-vs-reliability analysis for Azure, read-only. Joins monthly UsageDetails cost to Azure Monitor alerts (primary pain signal), Resource Health unavailable/degraded events, and Advisor HighAvailability recommendations (secondary signals), then ranks resources and services by transparent weighted-count reliability pain using the bundled reliability.py (run in-sandbox via ExecutePythonCode). Use for "where are we spending money but still hurting", "which low-cost resources need HA investment", and "which high-cost resources have no reliability pain and should be verified before rightsizing".
+description: FinOps cost-vs-reliability analysis for Azure, read-only. Joins monthly UsageDetails cost to Azure Monitor alerts (primary pain signal), Resource Health unavailable/degraded events, and Advisor HighAvailability recommendations (secondary signals), then ranks resources and services by transparent weighted-count reliability pain using the bundled reliability.py with the runtime's sandbox Python tool. Use for "where are we spending money but still hurting", "which low-cost resources need HA investment", and "which high-cost resources have no reliability pain and should be verified before rightsizing".
 ---
 
 ## When to use this skill
@@ -17,8 +17,8 @@ For cost spikes use `finops-cost-anomaly-detection`; for concrete savings recomm
 
 - **Cost Management Reader** on the subscription (`costInUSD` is null without it). **Reader** for
   Azure Monitor Alerts, Resource Health, Advisor, and optional Activity Log pulls.
-- Read-only `az` (`RunAzCliReadCommands`) and `ExecutePythonCode` (in-sandbox scoring). No POST/write
-  APIs are used.
+- Read-only `az` (`RunAzCliReadCommands`) and sandbox Python: use `ExecutePythonCode` when
+  available, otherwise `RunInTerminal` with `python3`. No POST/write APIs are used.
 
 ## Scope
 

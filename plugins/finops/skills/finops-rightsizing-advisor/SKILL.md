@@ -1,6 +1,6 @@
 ---
 name: finops-rightsizing-advisor
-description: Recommend rightsizing and idle-resource cleanup for Azure, read-only. Combines Azure Advisor cost recommendations with live utilization from Azure Monitor and inventory state from Resource Graph, validates each candidate against real CPU utilization and real cost before surfacing it, then ranks recommendations by estimated monthly savings using the bundled rightsize.py (run in-sandbox via ExecutePythonCode). Use for "what can we downsize or turn off", periodic savings reviews, and adding a cost-efficiency lens to capacity questions.
+description: Recommend rightsizing and idle-resource cleanup for Azure, read-only. Combines Azure Advisor cost recommendations with live utilization from Azure Monitor and inventory state from Resource Graph, validates each candidate against real CPU utilization and real cost before surfacing it, then ranks recommendations by estimated monthly savings using the bundled rightsize.py with the runtime's sandbox Python tool. Use for "what can we downsize or turn off", periodic savings reviews, and adding a cost-efficiency lens to capacity questions.
 ---
 
 ## When to use this skill
@@ -19,8 +19,8 @@ For cost *spikes* and their root cause, use `finops-cost-anomaly-detection` inst
 - **Reader** on the subscription/resource groups for Advisor, Resource Graph, and Azure Monitor
   metrics. **Cost Management Reader** to attach per-resource monthly cost (without it, savings are
   still estimated from Advisor where available but resources with no Advisor number show unknown cost).
-- Read-only `az` (`RunAzCliReadCommands`) and `ExecutePythonCode` (in-sandbox ranking). No POST/write
-  APIs are used.
+- Read-only `az` (`RunAzCliReadCommands`) and sandbox Python: use `ExecutePythonCode` when
+  available, otherwise `RunInTerminal` with `python3`. No POST/write APIs are used.
 
 ## Scope
 

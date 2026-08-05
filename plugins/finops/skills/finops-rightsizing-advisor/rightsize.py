@@ -4,7 +4,7 @@
 Pure, dependency-free logic so it is unit-testable offline. The agent gathers the
 raw inputs via read-only `az` (Advisor cost recs, Resource Graph inventory, Azure
 Monitor utilization, Consumption UsageDetails cost) and runs `recommend_rightsizing(...)`
-inside `ExecutePythonCode`. No Azure calls happen here.
+with the runtime's sandbox Python tool. No Azure calls happen here.
 
 The point of this module is to VALIDATE Advisor's suggestions and inventory heuristics
 against real utilization and real cost before surfacing them, then rank everything by

@@ -1,6 +1,6 @@
 ---
 name: finops-for-ai
-description: FinOps for Azure AI spend, read-only. Attributes Azure AI cost per resource, model, and service family from the modern Consumption UsageDetails pull — deliberately covering BOTH classic Azure OpenAI (kind=OpenAI) and Azure AI Foundry (kind=AIServices) accounts (both bill under Microsoft.CognitiveServices) PLUS Microsoft.MachineLearningServices (Foundry hub/project compute, managed online endpoints, fine-tuning), so Foundry-hosted model spend is never dropped. Splits token/model-meter spend from compute-meter spend, ranks the top cost drivers, and emits light read-only optimization hints, using the bundled attribute.py (run in-sandbox via ExecutePythonCode). Use for "what is our AI/OpenAI bill", per-model cost breakdown, and AI cost governance.
+description: FinOps for Azure AI spend, read-only. Attributes Azure AI cost per resource, model, and service family from the modern Consumption UsageDetails pull — deliberately covering BOTH classic Azure OpenAI (kind=OpenAI) and Azure AI Foundry (kind=AIServices) accounts (both bill under Microsoft.CognitiveServices) PLUS Microsoft.MachineLearningServices (Foundry hub/project compute, managed online endpoints, fine-tuning), so Foundry-hosted model spend is never dropped. Splits token/model-meter spend from compute-meter spend, ranks the top cost drivers, and emits light read-only optimization hints, using the bundled attribute.py with the runtime's sandbox Python tool. Use for "what is our AI/OpenAI bill", per-model cost breakdown, and AI cost governance.
 ---
 
 ## When to use this skill
@@ -31,8 +31,8 @@ aren't dropped. See the pack README's "AI resource taxonomy" note.
 
 - **Cost Management Reader** on the subscription (`costInUSD` is null without it). **Reader** for the
   optional Resource Graph `kind` lookup.
-- Read-only `az` (`RunAzCliReadCommands`) and `ExecutePythonCode` (in-sandbox attribution). No
-  POST/write APIs are used.
+- Read-only `az` (`RunAzCliReadCommands`) and sandbox Python: use `ExecutePythonCode` when
+  available, otherwise `RunInTerminal` with `python3`. No POST/write APIs are used.
 
 ## Scope
 

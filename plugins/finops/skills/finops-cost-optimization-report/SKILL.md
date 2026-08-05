@@ -1,6 +1,6 @@
 ---
 name: finops-cost-optimization-report
-description: Executive FinOps rollup for Azure — one report bundling cost anomalies, rightsizing savings, budget status, and governance (policy) findings. It orchestrates the four existing read-only skills (finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-cost-allocation, finops-budget-governance), then rolls their outputs up with the bundled summarize.py (run in-sandbox via ExecutePythonCode) into an executive headline, a single dollar-ranked priorities list, and per-section detail. Read-only — no writes, no new RBAC; "policy findings" reuse existing tag-hygiene and budget-gate signals rather than a new data source. Use for a periodic FinOps review, a cost-optimization summary, or an executive "where should we act" briefing.
+description: Executive FinOps rollup for Azure — one report bundling cost anomalies, rightsizing savings, budget status, and governance (policy) findings. It orchestrates the four existing read-only skills (finops-cost-anomaly-detection, finops-rightsizing-advisor, finops-cost-allocation, finops-budget-governance), then rolls their outputs up with the bundled summarize.py using the runtime's sandbox Python tool into an executive headline, a single dollar-ranked priorities list, and per-section detail. Read-only — no writes, no new RBAC; "policy findings" reuse existing tag-hygiene and budget-gate signals rather than a new data source. Use for a periodic FinOps review, a cost-optimization summary, or an executive "where should we act" briefing.
 ---
 
 ## When to use this skill
@@ -20,8 +20,8 @@ spend → `finops-cost-allocation`; budget status → `finops-budget-governance`
 
 - **Cost Management Reader** (or **Reader**) on the subscription — the same read-only access the four
   underlying skills use. No write role is needed or used.
-- Read-only `az` (`RunAzCliReadCommands`) and `ExecutePythonCode` (in-sandbox rollup). **No POST/PUT
-  or write APIs are called.**
+- Read-only `az` (`RunAzCliReadCommands`) and sandbox Python: use `ExecutePythonCode` when
+  available, otherwise `RunInTerminal` with `python3`. **No POST/PUT or write APIs are called.**
 - This report is purely a **rollup**: "policy findings" are the existing tag-hygiene / untagged-spend
   and budget-gate signals — it introduces no new data source and no new permission.
 

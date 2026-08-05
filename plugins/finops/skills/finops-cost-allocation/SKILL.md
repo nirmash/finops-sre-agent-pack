@@ -1,6 +1,6 @@
 ---
 name: finops-cost-allocation
-description: Showback / cost allocation for Azure, read-only. Joins per-resource monthly cost (modern Consumption UsageDetails) with resource tags (Resource Graph) to attribute spend to an owner dimension (team / env / service / costCenter / app / owner), then surfaces the spend that has no owner — an explicit unallocated bucket, a ranked untagged-resource list, and tag-hygiene flags — using the bundled allocate.py (run in-sandbox via ExecutePythonCode). Use for "who owns this bill", showback/chargeback prep, and finding untagged spend.
+description: Showback / cost allocation for Azure, read-only. Joins per-resource monthly cost (modern Consumption UsageDetails) with resource tags (Resource Graph) to attribute spend to an owner dimension (team / env / service / costCenter / app / owner), then surfaces the spend that has no owner — an explicit unallocated bucket, a ranked untagged-resource list, and tag-hygiene flags — using the bundled allocate.py with the runtime's sandbox Python tool. Use for "who owns this bill", showback/chargeback prep, and finding untagged spend.
 ---
 
 ## When to use this skill
@@ -17,8 +17,8 @@ use `finops-rightsizing-advisor`.
 
 - **Cost Management Reader** on the subscription (`costInUSD` is null without it) and **Reader** for
   Resource Graph tags.
-- Read-only `az` (`RunAzCliReadCommands`) and `ExecutePythonCode` (in-sandbox allocation). No
-  POST/write APIs are used.
+- Read-only `az` (`RunAzCliReadCommands`) and sandbox Python: use `ExecutePythonCode` when
+  available, otherwise `RunInTerminal` with `python3`. No POST/write APIs are used.
 
 ## Scope
 

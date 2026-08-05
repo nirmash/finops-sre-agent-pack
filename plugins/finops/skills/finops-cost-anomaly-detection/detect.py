@@ -1,8 +1,8 @@
 """Cost anomaly detector for the FinOps SRE Agent pack (skill: finops-cost-anomaly-detection).
 
 Pure, dependency-free logic so it is unit-testable offline. The agent reads this file
-via `read_skill_file` and runs `detect_anomalies(...)` inside `ExecutePythonCode` after
-loading Cost Management UsageDetails line items. No Azure calls happen here.
+and runs `detect_anomalies(...)` with the runtime's sandbox Python tool after loading
+Cost Management UsageDetails line items. No Azure calls happen here.
 
 Line-item shape (one dict per UsageDetails row, already flattened by the skill):
     {

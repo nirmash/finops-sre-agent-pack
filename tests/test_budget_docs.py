@@ -69,3 +69,12 @@ def test_installer_docs_keep_core_tools_fixed():
     assert "cannot be appended" in text
     assert "properties.tools" in text
     assert "must equal exactly" in text
+
+
+def test_skill_docs_support_both_sandbox_python_runtime_variants():
+    for path in (FINOPS / "skills").glob("*/SKILL.md"):
+        text = path.read_text()
+        assert "run in-sandbox via ExecutePythonCode" not in text
+        if "ExecutePythonCode" in text:
+            assert "RunInTerminal" in text
+            assert "python3" in text

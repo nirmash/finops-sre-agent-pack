@@ -1,6 +1,6 @@
 ---
 name: finops-cost-anomaly-detection
-description: Detect Azure cost spikes and explain why they happened. Pulls the daily cost time-series from Cost Management (Consumption UsageDetails), detects per-service/per-meter anomalies with the bundled detect.py (run in-sandbox via ExecutePythonCode), then correlates each spike to recent deployments, activity-log changes, and GitHub merges to surface a probable cause. Use for scheduled cost monitoring, "did anything spike this week and why", and adding a cost lens to incident investigations.
+description: Detect Azure cost spikes and explain why they happened. Pulls the daily cost time-series from Cost Management (Consumption UsageDetails), detects per-service/per-meter anomalies with the bundled detect.py using the runtime's sandbox Python tool, then correlates each spike to recent deployments, activity-log changes, and GitHub merges to surface a probable cause. Use for scheduled cost monitoring, "did anything spike this week and why", and adding a cost lens to incident investigations.
 ---
 
 ## When to use this skill
@@ -16,7 +16,8 @@ periodic cost summary, use `cost-optimization-report` instead.
   identity. Without it, `costInUSD` comes back null. This is a one-time RBAC grant (see the
   plugin README).
 - Read-only `az` (`RunAzCliReadCommands`), the GitHub connector (for change correlation), and
-  `ExecutePythonCode` (in-sandbox detection). No POST/write APIs are used.
+  sandbox Python: use `ExecutePythonCode` when available, otherwise `RunInTerminal` with
+  `python3`. No POST/write APIs are used.
 
 ## Procedure
 
@@ -84,7 +85,8 @@ az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/
 
 ### Step 2 — Detect (bundled detect.py, in-sandbox)
 
-Read the detector and run it with `ExecutePythonCode`:
+Read the detector and run it with the available sandbox Python tool:
+`ExecutePythonCode`, or `RunInTerminal` with `python3` when that is the runtime-provided tool.
 
 ```
 read_skill_file(skill_name="finops-cost-anomaly-detection", file_path="detect.py")

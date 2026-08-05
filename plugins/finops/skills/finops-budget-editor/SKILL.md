@@ -72,7 +72,8 @@ For “what should my budget be?” or other advisory language:
 
 1. Read relevant budgets with `RunAzCliReadCommands`, including direct configured-management-group
    budget collections and the de-duplicated expanded descendant effective scopes.
-2. Load `recommend.py` with `ExecutePythonCode` and call `recommend_budgets`.
+2. Load `recommend.py` with the available sandbox Python tool (`ExecutePythonCode`, or
+   `RunInTerminal` with `python3`) and call `recommend_budgets`.
 3. Report amounts, evidence, assumptions, and missing contacts. Do not run any generated command.
 
 ### Create/update planning

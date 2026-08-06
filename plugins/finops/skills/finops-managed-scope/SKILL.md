@@ -108,6 +108,12 @@ resource groups. Never construct
 supported. Querying the containing subscription is transport only and does not broaden the
 logical analysis boundary.
 
+Do not add a `properties/resourceGroup eq ...` filter to the subscription UsageDetails request.
+The service may silently ignore that filter. Fetch the initial page once, persist it, and follow
+only that response's `nextLink` chain to completion; do not mix pages from independently restarted
+requests because ordering and newly settled usage can differ between calls. Apply the exact
+case-insensitive RG boundary with `filter_usage_details` only after the complete chain is assembled.
+
 ```python
 coverage = filter_usage_details(
     usage_rows,

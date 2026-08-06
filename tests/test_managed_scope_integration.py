@@ -69,6 +69,35 @@ def test_usage_and_telemetry_skills_enforce_per_scope_retrieval():
         assert "unattributed" in lowered
 
 
+def test_budget_editor_uses_subscription_transport_and_client_side_rg_filtering():
+    lowered = (
+        FINOPS / "skills" / "finops-budget-editor" / "SKILL.md"
+    ).read_text().lower()
+    normalized = re.sub(r"\s+", " ", lowered)
+
+    assert "subscription-scoped transport" in normalized
+    assert "/subscriptions/<sub_id>/providers/microsoft.consumption/usagedetails" in normalized
+    assert "without a resource-group server filter" in normalized
+    assert "never trust `properties/resourcegroup eq ...`" in normalized
+    assert "filter_usage_details" in normalized
+    assert "initial page exactly once" in normalized
+    assert "pages from separate chains must not be mixed" in normalized
+    assert "included, excluded, unattributed, and" in normalized
+
+
+def test_managed_scope_forbids_server_side_usage_rg_filter_and_mixed_chains():
+    lowered = (
+        FINOPS / "skills" / "finops-managed-scope" / "SKILL.md"
+    ).read_text().lower()
+    normalized = re.sub(r"\s+", " ", lowered)
+
+    assert "do not add a `properties/resourcegroup eq ...` filter" in normalized
+    assert "silently ignore that filter" in normalized
+    assert "fetch the initial page once" in normalized
+    assert "do not mix pages from independently restarted requests" in normalized
+    assert "filter_usage_details" in normalized
+
+
 def test_scheduled_templates_have_strict_dynamic_scope_preamble():
     templates = sorted((FINOPS / "scheduled-tasks").glob("*.yaml"))
     assert len(templates) == 8

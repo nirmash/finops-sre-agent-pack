@@ -107,15 +107,28 @@ Use a positive explicit amount when supplied. Otherwise fetch bounded Consumptio
 - Quarterly: current quarter plus 4 complete quarters.
 - Annually: current year plus the prior complete year.
 
-Use a bounded URL of this form, encoding the real filter. Lower `$top` on 413, verify returned dates,
-and disclose/stop on missing pages:
+Consumption UsageDetails is a **subscription-scoped transport**. For an RG budget, query the
+containing subscription endpoint without a resource-group server filter, follow one returned
+`nextLink` chain to exhaustion, then run `finops-managed-scope`'s `filter_usage_details` over the
+combined rows to retain only the exact managed RG. Never use an RG UsageDetails endpoint and never
+trust `properties/resourceGroup eq ...` as a server-side filter: live responses may ignore it.
+
+Use a bounded subscription URL of this form. Lower `$top` on 413, verify returned dates, and
+disclose/stop on missing pages:
 
 ```bash
 az rest --method get \
-  --url "https://management.azure.com/{scope}/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&\$filter=properties/usageStart ge '<START>' and properties/usageEnd le '<END>'&\$top=1000" \
-  --query "{value:value[].{date:properties.date,cost:properties.costInUSD},nextLink:nextLink}" \
+  --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&\$filter=properties/usageStart ge '<START>' and properties/usageEnd le '<END>'&\$top=1000" \
+  --query "{value:value[].{id:id,date:properties.date,cost:properties.costInUSD,resourceGroup:properties.resourceGroup,resourceId:properties.instanceName},nextLink:nextLink}" \
   -o json
 ```
+
+Fetch the initial page exactly once and persist its projected rows before following its `nextLink`
+as-is (after decoding `&amp;`). Continue from that chain until `nextLink` is absent. Do not restart
+the initial request to compare page 1 results: UsageDetails ordering and settlement can change
+between independent calls, so pages from separate chains must not be mixed. De-duplicate the final
+combined rows, apply `filter_usage_details`, and disclose included, excluded, unattributed, and
+duplicate counts/cost before deriving the amount.
 
 Aggregate offline:
 

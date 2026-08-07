@@ -130,6 +130,10 @@ between independent calls, so pages from separate chains must not be mixed. De-d
 combined rows, apply `filter_usage_details`, and disclose included, excluded, unattributed, and
 duplicate counts/cost before deriving the amount.
 
+Use `finops-managed-scope`'s `prepare_usage_details(...)` for that chain validation, merge,
+de-duplication, and filtering. Derive period totals only from `included_rows`; never reconstruct
+the chain or totals in model reasoning.
+
 Aggregate offline:
 
 ```python

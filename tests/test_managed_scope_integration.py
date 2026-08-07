@@ -139,6 +139,27 @@ def test_usage_details_docs_share_canonical_transport_projection_contract():
         assert "same hardened Consumption UsageDetails pull" not in path.read_text()
 
 
+def test_usage_details_skills_delegate_page_assembly_to_code():
+    skills = FINOPS / "skills"
+    managed = (skills / "finops-managed-scope" / "SKILL.md").read_text()
+    assert "from usage import prepare_usage_details" in managed
+    assert "rejects restarted/mixed chains" in managed
+    assert "remaining_next_link" in managed
+
+    consumers = {
+        "finops-budget-editor",
+        "finops-cost-allocation",
+        "finops-cost-anomaly-detection",
+        "finops-cost-vs-reliability",
+        "finops-for-ai",
+        "finops-rightsizing-advisor",
+    }
+    for name in consumers:
+        text = (skills / name / "SKILL.md").read_text()
+        assert "prepare_usage_details" in text, name
+        assert "model reasoning" in text, name
+
+
 def test_scheduled_templates_have_strict_dynamic_scope_preamble():
     templates = sorted((FINOPS / "scheduled-tasks").glob("*.yaml"))
     assert len(templates) == 8

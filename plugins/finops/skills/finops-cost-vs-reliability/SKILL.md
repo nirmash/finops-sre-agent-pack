@@ -71,6 +71,10 @@ falls back to `properties.resourceId`. If `costInUSD` is null, the bundled core 
 order as the other skills: `cost` / `costInUSD` / `pretaxCost`. If the pull cannot complete after all
 fallbacks, keep the partial rows but label the report totals **partial — cost pull truncated**.
 
+Pass persisted page envelopes through `finops-managed-scope`'s
+`prepare_usage_details(...)` and give `analyze_cost_vs_reliability` only `included_rows`. Preserve
+the returned coverage/partial metadata instead of merging or filtering pages in model reasoning.
+
 ### Step 2 — Pull Azure Monitor alerts (primary pain signal)
 
 Pull recent alerts through Alerts Management. Keep at least severity, target resource ids, alert rule,

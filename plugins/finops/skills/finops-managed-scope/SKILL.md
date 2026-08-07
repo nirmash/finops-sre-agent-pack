@@ -130,15 +130,26 @@ requests because ordering and newly settled usage can differ between calls. Deco
 returned `nextLink`, then GET it as-is without re-adding initial query parameters. Apply the exact
 case-insensitive RG boundary with `filter_usage_details` only after the complete chain is assembled.
 
+Persist every projected response page with the exact URL used for that request:
+`{"request_url": "...", "value": [...], "nextLink": "..."}`. Then use `usage.py` so code,
+not the model, validates chain continuity and combines the pages:
+
 ```python
-coverage = filter_usage_details(
-    usage_rows,
+from usage import prepare_usage_details
+
+coverage = prepare_usage_details(
+    usage_pages,
     managed_resources,
     management_group_expansions=mg_descendants,
 )
 ```
 
-The helper prefers UsageDetails `instanceName` (the modern full ARM ID), falls back to
+`prepare_usage_details` rejects restarted/mixed chains, requires the final `nextLink` to be
+retrieved, merges all rows, and calls `filter_usage_details`. Set `require_complete=False` only
+after all bounded-page and date-slice fallbacks fail; the returned `partial` flag and
+`remaining_next_link` must then be disclosed on every downstream total.
+
+The filtering core prefers UsageDetails `instanceName` (the modern full ARM ID), falls back to
 `resourceId`, then to resource-group/subscription metadata. It removes duplicate rows,
 keeps subscription-level shared charges only when the subscription itself is managed,
 and separates included, excluded, and unattributed rows. Costs and totals are

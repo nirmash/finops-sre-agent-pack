@@ -82,6 +82,9 @@ az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/
   **`properties.instanceName`** (in modern billing the full ARM resource id lives there and
   `properties.resourceId` is null); fall back to `properties.resourceId` when `instanceName`
   is absent.
+- Pass the persisted page envelopes to `finops-managed-scope`'s
+  `prepare_usage_details(...)`; call `detect_anomalies` only with its `included_rows`. Do not
+  concatenate, de-duplicate, or scope-filter pages in model reasoning.
 
 ### Step 2 — Detect (bundled detect.py, in-sandbox)
 

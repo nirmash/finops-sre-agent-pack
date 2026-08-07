@@ -81,6 +81,10 @@ details are specific to this skill:
    filter on `kind` or on a meter category — that is the whole point (Foundry `AIServices` accounts
    would be dropped). Aggregate over the trailing ~30 days.
 
+Before AI classification, pass the persisted page envelopes through `finops-managed-scope`'s
+`prepare_usage_details(...)` and classify only `included_rows`. Use the returned coverage/partial
+fields directly; do not merge, de-duplicate, or scope-filter pages in model reasoning.
+
 ### Step 2 (optional) — Pull resource `kind` (Resource Graph)
 
 Only to label each resource OpenAI vs AIServices vs the ML kind in the report:

@@ -184,6 +184,10 @@ but it keeps the retained sandbox payload small. If the pull still cannot comple
 but **label the savings totals "partial — cost pull truncated"** so the biggest line items aren't
 undercounted silently.
 
+Persist the page envelopes and run `finops-managed-scope`'s `prepare_usage_details(...)`. Aggregate
+monthly cost only from `included_rows`; use its exact coverage and `partial` fields in the final
+result. Do not merge or scope-filter UsageDetails in model reasoning.
+
 ### Step 5 — Rank (bundled rightsize.py, in-sandbox)
 
 Read the module and run it — do **not** re-implement the logic in the prompt:

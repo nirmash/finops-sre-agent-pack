@@ -64,6 +64,10 @@ After managed-scope filtering, aggregate `cost` by resource id into
 `{resourceId: monthly_usd}` with case-insensitive ids. Resource Graph in Step 2 remains the source
 for the current resource tag map used by `allocate_costs`.
 
+Perform the page merge and managed-scope filtering with `finops-managed-scope`'s
+`prepare_usage_details(...)`, then pass only `included_rows` into the allocation input transform.
+Do not concatenate, de-duplicate, or scope-filter pages in model reasoning.
+
 ### Step 2 — Pull resource tags (Resource Graph)
 
 ```bash

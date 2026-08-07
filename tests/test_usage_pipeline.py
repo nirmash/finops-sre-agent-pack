@@ -67,6 +67,7 @@ def test_prepares_complete_chain_and_filters_after_merge():
     assert result["included_count"] == 2
     assert result["excluded_count"] == 1
     assert result["duplicate_count"] == 1
+    assert str(result["duplicate_cost"]) == "1.25"
     assert str(result["included_cost"]) == "3.75"
     assert str(result["excluded_cost"]) == "8.75"
 

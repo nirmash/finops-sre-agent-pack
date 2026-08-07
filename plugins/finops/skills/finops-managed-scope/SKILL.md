@@ -12,7 +12,9 @@ Broad Azure RBAC is not evidence that a scope is managed: managedResources remai
 policy boundary even when the agent identity can read more.
 
 This skill is read-only. It introduces no runtime changes and uses no write tools. The
-bundled `scope.py` is pure offline logic and makes **no Azure calls**.
+bundled `scope.py` is pure offline logic and makes **no Azure calls**. Keep the whole
+skill directory together: `scope.py` loads its dependency-free `_scope_resolution.py`
+sibling relative to `__file__`, so direct dynamic imports do not depend on `sys.path`.
 
 ## 1. Read the live managed scope every run
 

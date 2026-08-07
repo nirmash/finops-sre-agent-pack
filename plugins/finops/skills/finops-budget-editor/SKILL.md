@@ -76,6 +76,10 @@ For “what should my budget be?” or other advisory language:
    `RunInTerminal` with `python3`) and call `recommend_budgets`.
 3. Report amounts, evidence, assumptions, and missing contacts. Do not run any generated command.
 
+`recommend.py` intentionally remains one dependency-free file because this documented sandbox
+flow loads that file directly by path. Its recommendation, proposal, script-rendering, and
+read-back sections use internal helpers rather than requiring sibling modules.
+
 ### Create/update planning
 
 For an explicit request to plan, draft, create, or update one named budget, build the deterministic

@@ -2,6 +2,11 @@
 
 The module has no Azure dependency.  Callers supply the exact budget GET result and,
 when an amount is derived, bounded UsageDetails ActualCost period aggregates.
+
+This intentionally remains one dependency-free file: the skill's documented sandbox
+flow loads ``recommend.py`` directly by path. Internal helpers keep the recommendation,
+proposal, script-rendering, and read-back boundaries explicit without requiring sibling
+modules that may not be copied into that sandbox.
 """
 
 import copy
@@ -41,6 +46,69 @@ _SCOPE_RE = re.compile(
 _MG_SCOPE_RE = re.compile(
     r"^/providers/Microsoft\.Management/managementGroups/([^/]+)$", re.IGNORECASE
 )
+_READBACK_VERIFIER = r'''import json
+import sys
+from decimal import Decimal
+
+expected = json.loads(sys.argv[1], parse_float=Decimal, parse_int=Decimal)
+label = sys.argv[2]
+actual_doc = json.load(sys.stdin, parse_float=Decimal, parse_int=Decimal)
+actual = actual_doc.get("properties") if isinstance(actual_doc, dict) else None
+if isinstance(actual, dict):
+    actual = {
+        key: value for key, value in actual.items()
+        if key not in {"currentSpend", "forecastSpend"}
+    }
+    expected_time_period = expected.get("timePeriod")
+    actual_time_period = actual.get("timePeriod")
+    if (
+        isinstance(expected_time_period, dict)
+        and "endDate" not in expected_time_period
+        and isinstance(actual_time_period, dict)
+    ):
+        actual_time_period.pop("endDate", None)
+differences = []
+
+def compare(want, got, path):
+    if isinstance(want, dict):
+        if not isinstance(got, dict):
+            differences.append({"path": path, "expected": want, "actual": got})
+            return
+        for key in sorted(set(want) | set(got)):
+            if key not in want:
+                differences.append({
+                    "path": f"{path}.{key}", "expected": None, "actual": got[key],
+                    "kind": "unexpected",
+                })
+            elif key not in got:
+                differences.append({
+                    "path": f"{path}.{key}", "expected": want[key], "actual": None,
+                    "kind": "missing",
+                })
+            else:
+                compare(want[key], got[key], f"{path}.{key}")
+    elif isinstance(want, list):
+        if not isinstance(got, list):
+            differences.append({"path": path, "expected": want, "actual": got})
+            return
+        if len(want) != len(got):
+            differences.append({"path": path, "expected": want, "actual": got})
+            return
+        for index, value in enumerate(want):
+            compare(value, got[index], f"{path}[{index}]")
+    elif isinstance(want, Decimal):
+        if not isinstance(got, Decimal) or want != got:
+            differences.append({"path": path, "expected": want, "actual": got})
+    elif want != got:
+        differences.append({"path": path, "expected": want, "actual": got})
+
+compare(expected, actual, "properties")
+if differences:
+    print(f"Budget {label} mismatch:", file=sys.stderr)
+    print(json.dumps(differences, indent=2, sort_keys=True, default=str), file=sys.stderr)
+    raise SystemExit(1)
+print(f"Budget {label} matches expected persisted fields.")
+'''
 
 
 def _num(value):
@@ -534,69 +602,6 @@ def _application_script(
         json.dumps(expected_before, sort_keys=True, separators=(",", ":"))
         if expected_before is not None else ""
     )
-    verifier = r'''import json
-import sys
-from decimal import Decimal
-
-expected = json.loads(sys.argv[1], parse_float=Decimal, parse_int=Decimal)
-label = sys.argv[2]
-actual_doc = json.load(sys.stdin, parse_float=Decimal, parse_int=Decimal)
-actual = actual_doc.get("properties") if isinstance(actual_doc, dict) else None
-if isinstance(actual, dict):
-    actual = {
-        key: value for key, value in actual.items()
-        if key not in {"currentSpend", "forecastSpend"}
-    }
-    expected_time_period = expected.get("timePeriod")
-    actual_time_period = actual.get("timePeriod")
-    if (
-        isinstance(expected_time_period, dict)
-        and "endDate" not in expected_time_period
-        and isinstance(actual_time_period, dict)
-    ):
-        actual_time_period.pop("endDate", None)
-differences = []
-
-def compare(want, got, path):
-    if isinstance(want, dict):
-        if not isinstance(got, dict):
-            differences.append({"path": path, "expected": want, "actual": got})
-            return
-        for key in sorted(set(want) | set(got)):
-            if key not in want:
-                differences.append({
-                    "path": f"{path}.{key}", "expected": None, "actual": got[key],
-                    "kind": "unexpected",
-                })
-            elif key not in got:
-                differences.append({
-                    "path": f"{path}.{key}", "expected": want[key], "actual": None,
-                    "kind": "missing",
-                })
-            else:
-                compare(want[key], got[key], f"{path}.{key}")
-    elif isinstance(want, list):
-        if not isinstance(got, list):
-            differences.append({"path": path, "expected": want, "actual": got})
-            return
-        if len(want) != len(got):
-            differences.append({"path": path, "expected": want, "actual": got})
-            return
-        for index, value in enumerate(want):
-            compare(value, got[index], f"{path}[{index}]")
-    elif isinstance(want, Decimal):
-        if not isinstance(got, Decimal) or want != got:
-            differences.append({"path": path, "expected": want, "actual": got})
-    elif want != got:
-        differences.append({"path": path, "expected": want, "actual": got})
-
-compare(expected, actual, "properties")
-if differences:
-    print(f"Budget {label} mismatch:", file=sys.stderr)
-    print(json.dumps(differences, indent=2, sort_keys=True, default=str), file=sys.stderr)
-    raise SystemExit(1)
-print(f"Budget {label} matches expected persisted fields.")
-'''
     lines = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
@@ -633,7 +638,7 @@ print(f"Budget {label} matches expected persisted fields.")
         "    exit 3",
         "  fi",
         '  if ! printf "%s" "$CURRENT_STATE" | python3 -c '
-        + shlex.quote(verifier)
+        + shlex.quote(_READBACK_VERIFIER)
         + ' "$EXPECTED_BEFORE_PROPERTIES" "preflight state"; then',
         '    echo "Refusing update: the budget changed after the proposal was built." >&2',
         "      exit 5",
@@ -671,7 +676,7 @@ print(f"Budget {label} matches expected persisted fields.")
         'printf "Post-write GET result:\\n%s\\n" "$READBACK_JSON"',
         "",
         'printf "%s" "$READBACK_JSON" | python3 -c '
-        + shlex.quote(verifier)
+        + shlex.quote(_READBACK_VERIFIER)
         + ' "$EXPECTED_PROPERTIES" "read-back"',
     ]
     return "\n".join(lines) + "\n"
@@ -1033,6 +1038,81 @@ def _rationale(action, current_amount, forecast, forecast_source, recommended, b
     return f"current {current_amount} {currency} already covers {basis} {buffer_text}; keep"
 
 
+def _recommend_budget(budget, *, today, buffer_pct, buffer_mult, contacts):
+    props = budget.get("properties") or {}
+    name = budget.get("name") or props.get("name") or "(unnamed)"
+    current_amount = _num(props.get("amount"))
+    current_spend, currency = _spend_amount(props.get("currentSpend"))
+    current_spend = current_spend or 0.0
+    currency = currency or "USD"
+    forecast, forecast_source = _forecast(props, current_spend, today)
+    basis = max(forecast or 0.0, current_spend, 0.0)
+    rounded_current_amount = (
+        round(current_amount, 2) if current_amount is not None else None
+    )
+    if basis <= 0:
+        return {
+            "name": name,
+            "scope": _scope_of(budget, props),
+            "action": "insufficient_data",
+            "current_amount": rounded_current_amount,
+            "currency": currency,
+            "forecast_spend": forecast,
+            "forecast_source": forecast_source,
+            "recommended_amount": None,
+            "notifications_added": False,
+            "requires_contacts": False,
+            "rationale": "no forecast or spend signal yet (currentSpend may be unsynced); "
+            "cannot size a budget — get a spend figure first",
+            "put_url": None,
+            "put_body": None,
+            "command": None,
+        }
+
+    recommended = _round_up_nice(basis * buffer_mult)
+    action = _classify(current_amount, recommended)
+    body, added = _recommendation_payload(props, recommended, contacts)
+    budget_id = budget.get("id")
+    if budget_id:
+        url = (
+            budget_id
+            if str(budget_id).startswith("https://")
+            else f"{_MANAGEMENT_ENDPOINT}{budget_id}"
+        )
+        put_url = f"{url.split('?', 1)[0]}?api-version={_API_VERSION}"
+    else:
+        put_url = None
+    command = (
+        _shell_command(put_url, body, "update", budget.get("eTag"))
+        if put_url and body and budget.get("eTag")
+        else None
+    )
+    return {
+        "name": name,
+        "scope": _scope_of(budget, props),
+        "action": action,
+        "current_amount": rounded_current_amount,
+        "currency": currency,
+        "forecast_spend": forecast,
+        "forecast_source": forecast_source,
+        "recommended_amount": recommended,
+        "notifications_added": added,
+        "requires_contacts": body is None,
+        "rationale": _rationale(
+            action,
+            current_amount,
+            forecast,
+            forecast_source,
+            recommended,
+            buffer_pct,
+            currency,
+        ),
+        "put_url": put_url if body else None,
+        "put_body": body,
+        "command": command,
+    }
+
+
 def recommend_budgets(budgets=None, *, as_of=None, buffer_pct=DEFAULT_BUFFER_PCT,
                       contacts=_UNSET):
     """Preserve the original right-sizing report, now without placeholder payloads."""
@@ -1053,71 +1133,15 @@ def recommend_budgets(budgets=None, *, as_of=None, buffer_pct=DEFAULT_BUFFER_PCT
     recommendations = []
     tally = defaultdict(int)
     for budget in budgets:
-        props = budget.get("properties") or {}
-        name = budget.get("name") or props.get("name") or "(unnamed)"
-        current_amount = _num(props.get("amount"))
-        current_spend, currency = _spend_amount(props.get("currentSpend"))
-        current_spend = current_spend or 0.0
-        currency = currency or "USD"
-        forecast, forecast_source = _forecast(props, current_spend, today)
-        basis = max(forecast or 0.0, current_spend, 0.0)
-        if basis <= 0:
-            recommendations.append({
-                "name": name,
-                "scope": _scope_of(budget, props),
-                "action": "insufficient_data",
-                "current_amount": round(current_amount, 2) if current_amount is not None else None,
-                "currency": currency,
-                "forecast_spend": forecast,
-                "forecast_source": forecast_source,
-                "recommended_amount": None,
-                "notifications_added": False,
-                "requires_contacts": False,
-                "rationale": "no forecast or spend signal yet (currentSpend may be unsynced); "
-                             "cannot size a budget — get a spend figure first",
-                "put_url": None,
-                "put_body": None,
-                "command": None,
-            })
-            tally["insufficient_data"] += 1
-            continue
-
-        recommended = _round_up_nice(basis * buffer_mult)
-        action = _classify(current_amount, recommended)
-        body, added = _recommendation_payload(props, recommended, contacts)
-        budget_id = budget.get("id")
-        if budget_id:
-            url = (
-                budget_id if str(budget_id).startswith("https://")
-                else f"{_MANAGEMENT_ENDPOINT}{budget_id}"
-            )
-            put_url = f"{url.split('?', 1)[0]}?api-version={_API_VERSION}"
-        else:
-            put_url = None
-        command = (
-            _shell_command(put_url, body, "update", budget.get("eTag"))
-            if put_url and body and budget.get("eTag") else None
+        recommendation = _recommend_budget(
+            budget,
+            today=today,
+            buffer_pct=buffer_pct,
+            buffer_mult=buffer_mult,
+            contacts=contacts,
         )
-        recommendations.append({
-            "name": name,
-            "scope": _scope_of(budget, props),
-            "action": action,
-            "current_amount": round(current_amount, 2) if current_amount is not None else None,
-            "currency": currency,
-            "forecast_spend": forecast,
-            "forecast_source": forecast_source,
-            "recommended_amount": recommended,
-            "notifications_added": added,
-            "requires_contacts": body is None,
-            "rationale": _rationale(
-                action, current_amount, forecast, forecast_source,
-                recommended, buffer_pct, currency,
-            ),
-            "put_url": put_url if body else None,
-            "put_body": body,
-            "command": command,
-        })
-        tally[action] += 1
+        recommendations.append(recommendation)
+        tally[recommendation["action"]] += 1
 
     recommendations.sort(key=lambda item: _ACTION_ORDER.get(item["action"], 0), reverse=True)
     return {

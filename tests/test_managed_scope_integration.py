@@ -162,7 +162,7 @@ def test_usage_details_skills_delegate_page_assembly_to_code():
 
 def test_scheduled_templates_have_strict_dynamic_scope_preamble():
     templates = sorted((FINOPS / "scheduled-tasks").glob("*.yaml"))
-    assert len(templates) == 8
+    assert len(templates) == 7
 
     for path in templates:
         text = path.read_text()
@@ -176,10 +176,11 @@ def test_scheduled_templates_have_strict_dynamic_scope_preamble():
         assert "fail closed" in lowered
         assert "no override" in lowered
         assert "broad rbac" in lowered
-        assert "each effective scope independently" in lowered
         assert "without querying analysis data" in lowered
         assert "sending email" in lowered
         assert "saving a report" in lowered
+        assert "independent scoped retrieval" in lowered
+        assert "excluded, unattributed" in lowered
         assert "__SUB_ID__" not in text
 
 
@@ -238,16 +239,12 @@ def test_budget_status_task_queries_configured_management_groups_once():
     assert "__AGENT_RESOURCE_ID__" in text
     assert "fail closed" in lowered
     assert "no override" in lowered
-    assert "every management-group scope configured directly" in lowered
-    assert "expanded descendant effective scopes" in lowered
-    assert "case-insensitive canonical union" in lowered
-    assert "query each target exactly once" in lowered
-    assert "unless it is configured" in lowered
-    assert (
-        "/providers/microsoft.management/managementgroups/{management-group-id}/"
-        "providers/microsoft.consumption/budgets"
-    ) in lowered
-    assert "never substitute" in lowered
+    assert "finops-budget-governance" in lowered
+    assert "full read-only" in lowered
+    assert "every directly configured management-group budget scope" in lowered
+    assert "every expanded effective scope" in lowered
+    assert "never replace management-group budgets with descendant budgets" in lowered
+    assert "api-version=" not in lowered
 
 
 def test_all_documented_arg_and_advisor_commands_are_subscription_scoped():
@@ -270,8 +267,8 @@ def test_all_documented_arg_and_advisor_commands_are_subscription_scoped():
         for command in advisor_windows:
             assert "--subscription <EFFECTIVE_SUBSCRIPTION_ID>" in command, path
 
-    assert graph_count >= 8
-    assert advisor_count >= 6
+    assert graph_count >= 4
+    assert advisor_count >= 3
 
 
 def test_rg_only_arg_and_advisor_policy_is_concrete():
@@ -279,10 +276,6 @@ def test_rg_only_arg_and_advisor_policy_is_concrete():
         FINOPS / "skills" / "finops-rightsizing-advisor" / "SKILL.md",
         FINOPS / "skills" / "finops-cost-allocation" / "SKILL.md",
         FINOPS / "skills" / "finops-for-ai" / "SKILL.md",
-        FINOPS / "scheduled-tasks" / "rightsizing-weekly.yaml",
-        FINOPS / "scheduled-tasks" / "rightsizing-savings-report-weekly.yaml",
-        FINOPS / "scheduled-tasks" / "ai-spend-report-weekly.yaml",
-        FINOPS / "scheduled-tasks" / "cost-optimization-report-weekly.yaml",
     ]
     for path in arg_documents:
         lowered = path.read_text().lower()
@@ -293,12 +286,20 @@ def test_rg_only_arg_and_advisor_policy_is_concrete():
     advisor_documents = [
         FINOPS / "skills" / "finops-rightsizing-advisor" / "SKILL.md",
         FINOPS / "skills" / "finops-cost-vs-reliability" / "SKILL.md",
-        FINOPS / "scheduled-tasks" / "rightsizing-weekly.yaml",
-        FINOPS / "scheduled-tasks" / "rightsizing-savings-report-weekly.yaml",
-        FINOPS / "scheduled-tasks" / "cost-vs-reliability-report-weekly.yaml",
-        FINOPS / "scheduled-tasks" / "cost-optimization-report-weekly.yaml",
     ]
     for path in advisor_documents:
         lowered = path.read_text().lower()
         assert "--resource-group <effective_resource_group>" in lowered, path
         assert "client-side" in lowered, path
+
+    delegated_tasks = [
+        FINOPS / "scheduled-tasks" / "rightsizing-savings-report-weekly.yaml",
+        FINOPS / "scheduled-tasks" / "ai-spend-report-weekly.yaml",
+        FINOPS / "scheduled-tasks" / "cost-vs-reliability-report-weekly.yaml",
+        FINOPS / "scheduled-tasks" / "cost-optimization-report-weekly.yaml",
+    ]
+    for path in delegated_tasks:
+        lowered = path.read_text().lower()
+        assert "skill.md" in lowered, path
+        assert "az graph query" not in lowered, path
+        assert "az advisor recommendation list" not in lowered, path

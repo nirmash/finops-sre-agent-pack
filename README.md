@@ -14,7 +14,7 @@ Structure mirrors [Azure/sre-agent-plugins](https://github.com/Azure/sre-agent-p
 
 | Plugin | Description |
 |--------|-------------|
-| [`finops`](plugins/finops/README.md) | **FinOps pack** — nine read-only FinOps skills including `finops-managed-scope`, the standalone `finops-investigator` agent, and eight proactive read-only scheduled tasks including six Live Reports. Budget planning can generate a validated human-run application script. |
+| [`finops`](plugins/finops/README.md) | **FinOps pack** — ten read-only FinOps skills including `finops-managed-scope` and deterministic `finops-report-renderer`, the standalone `finops-investigator` agent, and seven proactive read-only scheduled tasks including six Live Reports. Budget planning can generate a validated human-run application script. |
 
 ## Managed scope
 
@@ -39,7 +39,7 @@ This is a skill-and-policy addition only; it makes no SRE Agent runtime changes.
 ## Install
 
 The supported installer installs the complete **`finops` plugin package** from this repository: all
-nine skills, `finops-investigator`, eight scheduled tasks, and six Live Reports. It does not install
+ten skills, `finops-investigator`, seven scheduled tasks, and six Live Reports. It does not install
 unrelated plugins from the marketplace.
 
 The installer uses the SRE Agent management API and requires `az`, `curl`, and `python3`.

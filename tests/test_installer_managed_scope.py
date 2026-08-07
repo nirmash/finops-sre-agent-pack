@@ -204,10 +204,73 @@ def test_cost_reader_uses_minimum_usage_details_transport_scopes():
 def test_deprecated_sub_id_is_never_used_for_prompts_or_grants():
     script = _script()
 
-    assert 'SUB_ID="${SUB_ID:-$DEFAULT_SUB_ID}"' in script
+    assert 'SUB_ID_WAS_SET="${SUB_ID+x}"' in script
+    assert 'if [ -n "$SUB_ID_WAS_SET" ]; then' in script
     assert "SUB_ID is deprecated and ignored" in script
+    assert "DEFAULT_SUB_ID" not in script
+    assert "93cba93f-571e-44e9-ac0a-a2987b58848c" not in script
     assert "${SUB_ID}" not in script
     assert '--scope "/subscriptions/${SUB_ID}"' not in script
+
+
+def test_personal_alert_and_correlation_defaults_are_removed_safely():
+    script = _script()
+
+    assert 'ALERT_EMAIL="${ALERT_EMAIL:-}"' in script
+    assert 'GITHUB_REPO="${GITHUB_REPO:-}"' in script
+    assert "nimashkowski@microsoft.com" not in script
+    assert "nirmash/azure-sre-agent-sandbox" not in script
+    assert "unset it to disable email delivery" in script
+    assert "unset it to disable GitHub correlation" in script
+    assert "GITHUB_REPO not set — scheduled anomaly detection will skip GitHub correlation." in script
+    assert "ALERT_EMAIL not set — scheduled findings will remain in task results" in script
+    assert "return the report only in the scheduled-task result" in script
+
+
+def test_scheduled_task_payloads_support_per_task_model_tiers():
+    script = _script()
+    model_tiers = {
+        "ANOMALY_MODEL_TIER": "TASK_NAME",
+        "RIGHTSIZE_MODEL_TIER": "RIGHTSIZE_TASK_NAME",
+        "REPORT_MODEL_TIER": "REPORT_TASK_NAME",
+        "RIGHTSIZE_REPORT_MODEL_TIER": "RIGHTSIZE_REPORT_TASK_NAME",
+        "BUDGET_REPORT_MODEL_TIER": "BUDGET_REPORT_TASK_NAME",
+        "COST_OPT_MODEL_TIER": "COST_OPT_TASK_NAME",
+        "AI_REPORT_MODEL_TIER": "AI_REPORT_TASK_NAME",
+        "RELIABILITY_REPORT_MODEL_TIER": "RELIABILITY_REPORT_TASK_NAME",
+    }
+
+    assert 'MODEL_TIER="${MODEL_TIER:-ReasoningHeavy}"' in script
+    assert 'local name="$1" description="$2" cron="$3" prompt="$4" model_tier="$5"' in script
+    assert 'MODEL_TIER="$model_tier" PROMPT="$prompt"' in script
+    assert '"modelTier": os.environ["MODEL_TIER"],' in script
+    for model_tier, task_name in model_tiers.items():
+        assert f'{model_tier}="${{{model_tier}:-$MODEL_TIER}}"' in script
+        assert re.search(
+            rf'upsert_task "\${task_name}".*?"\${model_tier}"',
+            script,
+            flags=re.DOTALL,
+        )
+
+
+def test_scheduled_tasks_are_listed_once_for_upserts_and_freshly_for_verification():
+    script = _script()
+    function_start = script.index("upsert_task() {")
+    first_call = script.index('say "Upserting scheduled task', function_start)
+    function = script[function_start:first_call]
+    verification_start = script.index("# ---- 6. Verify")
+
+    assert script.count("api GET /api/v1/scheduledtasks") == 2
+    assert "api GET /api/v1/scheduledtasks" not in function
+    assert 'SCHEDULED_TASKS_JSON="$RESP_BODY"' in script[:function_start]
+    assert 'printf \'%s\' "$SCHEDULED_TASKS_JSON"' in function
+    assert script.index("api GET /api/v1/scheduledtasks") < first_call
+    assert script.index(
+        "api GET /api/v1/scheduledtasks", verification_start
+    ) > verification_start
+    assert 'api DELETE "/api/v1/scheduledtasks/${task_id}"' in function
+    assert 'if [ "${current_status,,}" = "paused" ]' in function
+    assert 'api POST "/api/v1/scheduledtasks/${created_id}/pause"' in function
 
 
 def test_common_scope_preamble_is_exported_and_applied_to_every_task():

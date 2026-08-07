@@ -53,15 +53,16 @@ and partial/failed coverage.
 
 ### Step 1 — Pull per-resource monthly cost
 
-Use the **same hardened Consumption UsageDetails pull as `finops-cost-anomaly-detection` Step 1**
-(modern GET with `\$top=1000`, minimal `--query` field projection, and complete `nextLink`
-pagination; on `413`, lower `\$top` to `100` then `20`, and use verified short `usageStart` date
-slices only as a final fallback; if the pull cannot complete, keep partial rows but label totals
-"partial — cost pull truncated"). Over the
-trailing ~30 days, aggregate `costInUSD` by resource id into
-`{resourceId: monthly_usd}`. In modern billing the full ARM resource id is in `properties.instanceName`
-(`properties.resourceId` is null) — key on `instanceName`, fall back to `resourceId`. Ids are matched
-case-insensitively.
+Follow the canonical Consumption UsageDetails transport contract in `finops-managed-scope` over the
+trailing ~30 days. This skill's projection must explicitly retain `tags`:
+
+```
+--query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName || properties.resourceId, tags: tags}, nextLink: nextLink}"
+```
+
+After managed-scope filtering, aggregate `cost` by resource id into
+`{resourceId: monthly_usd}` with case-insensitive ids. Resource Graph in Step 2 remains the source
+for the current resource tag map used by `allocate_costs`.
 
 ### Step 2 — Pull resource tags (Resource Graph)
 

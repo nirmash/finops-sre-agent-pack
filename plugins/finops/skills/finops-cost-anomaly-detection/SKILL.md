@@ -60,7 +60,7 @@ The controls solve different problems:
 
 ```bash
 az rest --method get --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&\$top=1000" \
-  --query "{value: value[].{date: properties.date, cost: properties.costInUSD, meterCategory: properties.meterCategory, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName, tags: tags}, nextLink: nextLink}"
+  --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, meterCategory: properties.meterCategory, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName || properties.resourceId, tags: tags}, nextLink: nextLink}"
 ```
 
 - **Primary anti-413 sequence:** bounded `\$top=1000`; on 413 retry with `100`, then `20`.

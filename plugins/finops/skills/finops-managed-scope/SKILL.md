@@ -108,10 +108,26 @@ resource groups. Never construct
 supported. Querying the containing subscription is transport only and does not broaden the
 logical analysis boundary.
 
+Use this canonical UsageDetails transport contract in every consuming FinOps skill:
+
+- Use GET on `/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails` with
+  `metric=ActualCost`, starting at `\$top=1000`; never use the POST Cost Management Query API.
+- Project the response envelope as `{value: value[].{...}, nextLink: nextLink}`. Keep only the
+  fields needed by scope enforcement and the analysis, alias `cost` once from
+  `properties.costInUSD`, and resolve the analysis `resourceId` from
+  `properties.instanceName || properties.resourceId`. Include `subscriptionId` and
+  `resourceGroup` whenever rows may need metadata-based attribution.
+- If any request returns 413, retry that request with `\$top=100`, then `20`. Use verified,
+  half-open `usageStart` date slices only if bounded pages still fail, and de-duplicate the
+  combined rows.
+- If retrieval remains incomplete, retain the available rows only with an explicit partial-cost
+  warning on every downstream total.
+
 Do not add a `properties/resourceGroup eq ...` filter to the subscription UsageDetails request.
 The service may silently ignore that filter. Fetch the initial page once, persist it, and follow
 only that response's `nextLink` chain to completion; do not mix pages from independently restarted
-requests because ordering and newly settled usage can differ between calls. Apply the exact
+requests because ordering and newly settled usage can differ between calls. Decode `&amp;` in a
+returned `nextLink`, then GET it as-is without re-adding initial query parameters. Apply the exact
 case-insensitive RG boundary with `filter_usage_details` only after the complete chain is assembled.
 
 ```python

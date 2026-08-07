@@ -551,6 +551,61 @@ def _target_details(target):
         }
 
 
+def _containment_index(resolved):
+    management_groups = {}
+    for group in resolved["management_group_scopes"]:
+        descendants = resolved["management_group_descendants"].get(group, [group])
+        for descendant in descendants:
+            management_groups.setdefault(descendant.casefold(), group)
+
+    subscriptions = {}
+    for subscription in resolved["subscription_scopes"]:
+        subscriptions.setdefault(subscription.casefold(), subscription)
+
+    resource_groups = {}
+    for resource_group in resolved["resource_group_scopes"]:
+        resource_groups.setdefault(resource_group.casefold(), resource_group)
+
+    return {
+        "management_groups": management_groups,
+        "subscriptions": subscriptions,
+        "resource_groups": resource_groups,
+    }
+
+
+def _evaluate_indexed_containment(resolved, index, requested_scope_or_resource_id):
+    target = _target_details(requested_scope_or_resource_id)
+    target_key = target["target"].casefold()
+
+    containing_scope = None
+    reason = "outside_managed_scope"
+    if target["kind"] == "management_group":
+        containing_scope = index["management_groups"].get(target_key)
+        if containing_scope is not None:
+            reason = "management_group"
+    if containing_scope is None and target["subscription"]:
+        containing_scope = index["subscriptions"].get(
+            target["subscription"].casefold()
+        )
+        if containing_scope is not None:
+            reason = "subscription"
+    if containing_scope is None and target["resource_group"]:
+        containing_scope = index["resource_groups"].get(
+            target["resource_group"].casefold()
+        )
+        if containing_scope is not None:
+            reason = "resource_group"
+
+    return {
+        "contained": containing_scope is not None,
+        "target": target["target"],
+        "target_kind": target["kind"],
+        "containing_scope": containing_scope,
+        "reason": reason,
+        "diagnostics": resolved["diagnostics"],
+    }
+
+
 def evaluate_containment(
     managed_scopes, requested_scope_or_resource_id, management_group_expansions=None
 ):
@@ -559,57 +614,11 @@ def evaluate_containment(
     resolved = resolve_managed_scopes(
         managed_scopes, management_group_expansions=management_group_expansions
     )
-    target = _target_details(requested_scope_or_resource_id)
-    target_key = target["target"].casefold()
-
-    for group in resolved["management_group_scopes"]:
-        descendants = resolved["management_group_descendants"].get(group, [group])
-        if target["kind"] == "management_group" and target_key in {
-            item.casefold() for item in descendants
-        }:
-            return {
-                "contained": True,
-                "target": target["target"],
-                "target_kind": target["kind"],
-                "containing_scope": group,
-                "reason": "management_group",
-                "diagnostics": resolved["diagnostics"],
-            }
-
-    for subscription in resolved["subscription_scopes"]:
-        if target["subscription"] and (
-            target["subscription"].casefold() == subscription.casefold()
-        ):
-            return {
-                "contained": True,
-                "target": target["target"],
-                "target_kind": target["kind"],
-                "containing_scope": subscription,
-                "reason": "subscription",
-                "diagnostics": resolved["diagnostics"],
-            }
-
-    for resource_group in resolved["resource_group_scopes"]:
-        if target["resource_group"] and (
-            target["resource_group"].casefold() == resource_group.casefold()
-        ):
-            return {
-                "contained": True,
-                "target": target["target"],
-                "target_kind": target["kind"],
-                "containing_scope": resource_group,
-                "reason": "resource_group",
-                "diagnostics": resolved["diagnostics"],
-            }
-
-    return {
-        "contained": False,
-        "target": target["target"],
-        "target_kind": target["kind"],
-        "containing_scope": None,
-        "reason": "outside_managed_scope",
-        "diagnostics": resolved["diagnostics"],
-    }
+    return _evaluate_indexed_containment(
+        resolved,
+        _containment_index(resolved),
+        requested_scope_or_resource_id,
+    )
 
 
 def scope_contains(
@@ -771,6 +780,7 @@ def filter_usage_details(
     resolved = resolve_managed_scopes(
         managed_scopes, management_group_expansions=management_group_expansions
     )
+    containment_index = _containment_index(resolved)
     diagnostics = list(resolved["diagnostics"])
     included_rows = []
     excluded_rows = []
@@ -841,10 +851,10 @@ def filter_usage_details(
             )
             continue
 
-        decision = evaluate_containment(
-            resolved["configured_scopes"],
+        decision = _evaluate_indexed_containment(
+            resolved,
+            containment_index,
             target,
-            management_group_expansions=management_group_expansions,
         )
         if decision["contained"]:
             included_rows.append(row)

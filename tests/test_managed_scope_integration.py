@@ -98,6 +98,47 @@ def test_managed_scope_forbids_server_side_usage_rg_filter_and_mixed_chains():
     assert "filter_usage_details" in normalized
 
 
+def test_usage_details_docs_share_canonical_transport_projection_contract():
+    skills = FINOPS / "skills"
+    managed = (skills / "finops-managed-scope" / "SKILL.md").read_text()
+    managed_normalized = re.sub(r"\s+", " ", managed).lower()
+
+    assert "canonical usagedetails transport contract" in managed_normalized
+    assert "properties.instancename || properties.resourceid" in managed_normalized
+    assert "alias `cost` once" in managed_normalized
+    assert "subscriptionid" in managed_normalized
+    assert "resourcegroup" in managed_normalized
+    assert "explicit partial-cost warning" in managed_normalized
+
+    projection_skills = {
+        "finops-cost-anomaly-detection",
+        "finops-rightsizing-advisor",
+        "finops-cost-allocation",
+        "finops-budget-editor",
+        "finops-for-ai",
+        "finops-cost-vs-reliability",
+    }
+    for name in projection_skills:
+        normalized = re.sub(
+            r"\s+",
+            " ",
+            (skills / name / "SKILL.md").read_text(),
+        )
+        assert "properties.instanceName || properties.resourceId" in normalized, name
+        assert re.search(
+            r"subscriptionId:\s*properties\.subscriptionId",
+            normalized,
+        ), name
+
+    allocation = (skills / "finops-cost-allocation" / "SKILL.md").read_text()
+    reliability = (skills / "finops-cost-vs-reliability" / "SKILL.md").read_text()
+    assert "tags: tags" in allocation
+    assert "costInUSD: properties.costInUSD" not in reliability
+
+    for path in skills.glob("finops-*/SKILL.md"):
+        assert "same hardened Consumption UsageDetails pull" not in path.read_text()
+
+
 def test_scheduled_templates_have_strict_dynamic_scope_preamble():
     templates = sorted((FINOPS / "scheduled-tasks").glob("*.yaml"))
     assert len(templates) == 8

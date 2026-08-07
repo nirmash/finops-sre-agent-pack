@@ -63,20 +63,18 @@ unattributed AI cost, unsupported scopes, and partial/failed scope coverage.
 
 ### Step 1 — Pull AI cost line items
 
-Use the **same hardened Consumption UsageDetails pull as `finops-cost-anomaly-detection` Step 1**
-(modern GET with `\$top=1000`, `--query` field projection, and complete `nextLink` pagination; on
-`413`, lower `\$top` to `100` then `20`, and use verified short `usageStart` date slices only as a
-final fallback; label totals "partial" if the pull cannot complete). Two differences for this skill:
+Follow the canonical Consumption UsageDetails transport contract in `finops-managed-scope`. Two
+details are specific to this skill:
 
 1. **Project the extra fields** the classifier needs — add `consumedService`, `meterSubCategory`,
    and `meterName` on top of the usual cost fields:
 
    ```
-   --query "{value: value[].{date: properties.date, cost: properties.costInUSD, consumedService: properties.consumedService, meterCategory: properties.meterCategory, meterSubCategory: properties.meterSubCategory, meterName: properties.meterName, resourceId: properties.instanceName}, nextLink: nextLink}"
+   --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, consumedService: properties.consumedService, meterCategory: properties.meterCategory, meterSubCategory: properties.meterSubCategory, meterName: properties.meterName, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName || properties.resourceId}, nextLink: nextLink}"
    ```
 
-   In modern billing the full ARM resource id is in `properties.instanceName`
-   (`properties.resourceId` is null) — key on `instanceName`, fall back to `resourceId`.
+   In modern billing the full ARM resource id is in `properties.instanceName`; the projection falls
+   back to `properties.resourceId`.
 
 2. **Keep only the AI service families.** After flattening, retain rows whose `consumedService` is
    `Microsoft.CognitiveServices` or `Microsoft.MachineLearningServices` (case-insensitive). Do **not**

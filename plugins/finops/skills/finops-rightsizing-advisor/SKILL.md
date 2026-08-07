@@ -173,8 +173,9 @@ case-insensitively. This is what lets the skill **rank by dollars** and size idl
 Management Query/POST API is not needed.
 
 Start with the complete trailing window using `\$top=1000`, project only the needed fields with
-`--query "{value: value[].{date: properties.date, cost: properties.costInUSD, resourceGroup:
-properties.resourceGroup, resourceId: properties.instanceName, tags: tags}, nextLink: nextLink}"`,
+`--query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD,
+subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup,
+resourceId: properties.instanceName || properties.resourceId, tags: tags}, nextLink: nextLink}"`,
 and paginate every `nextLink`. If a request returns `413 Request Too Large`, retry with `\$top=100`,
 then `20`. Only if bounded pages still fail, use short half-open `usageStart` date slices as a
 fallback; live runs showed that filter is not reliably applied, so verify returned dates and

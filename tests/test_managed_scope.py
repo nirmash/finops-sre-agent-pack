@@ -335,6 +335,63 @@ def test_usage_filter_uses_nested_properties_and_case_insensitive_fields():
     assert result["included_cost"] == Decimal("0.01")
 
 
+def test_usage_filter_resolves_scope_once_for_large_mixed_rg_data(monkeypatch):
+    managed_resource_groups = [
+        f"{SUB_A}/resourceGroups/managed-{index}" for index in range(30)
+    ]
+    rows = []
+    expected_excluded_targets = []
+    for index in range(1200):
+        if index % 2 == 0:
+            resource_group = managed_resource_groups[index % 30]
+        else:
+            resource_group = f"{SUB_A}/resourceGroups/unmanaged-{index % 30}"
+            expected_excluded_targets.append(
+                f"{resource_group}/providers/Microsoft.Compute/disks/disk-{index}"
+            )
+        rows.append(
+            _row(
+                "0.01",
+                chargeId=f"charge-{index}",
+                resourceId=(
+                    f"{resource_group}/providers/Microsoft.Compute/disks/disk-{index}"
+                ),
+            )
+        )
+
+    original_resolve = scope.resolve_managed_scopes
+    original_evaluate = scope.evaluate_containment
+    resolution_calls = 0
+    evaluation_calls = 0
+
+    def counted_resolve(*args, **kwargs):
+        nonlocal resolution_calls
+        resolution_calls += 1
+        return original_resolve(*args, **kwargs)
+
+    def counted_evaluate(*args, **kwargs):
+        nonlocal evaluation_calls
+        evaluation_calls += 1
+        return original_evaluate(*args, **kwargs)
+
+    monkeypatch.setattr(scope, "resolve_managed_scopes", counted_resolve)
+    monkeypatch.setattr(scope, "evaluate_containment", counted_evaluate)
+
+    result = scope.filter_usage_details(rows, managed_resource_groups)
+
+    assert resolution_calls == 1
+    assert evaluation_calls == 0
+    assert result["included_count"] == 600
+    assert result["excluded_count"] == 600
+    assert result["included_cost"] == Decimal("6.00")
+    assert result["excluded_cost"] == Decimal("6.00")
+    assert [
+        item["target"]
+        for item in result["diagnostics"]
+        if item["code"] == "outside_managed_scope"
+    ] == expected_excluded_targets
+
+
 def test_missing_ids_and_shared_charges_are_not_guessed_into_rg():
     rows = [
         _row("4.00", subscriptionId="Sub-A"),

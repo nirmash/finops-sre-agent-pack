@@ -57,20 +57,17 @@ De-duplicate recommendations from overlapping scopes.
 
 ### Step 1 — Pull monthly cost line items (UsageDetails GET only)
 
-Use the same hardened Consumption UsageDetails pull as the other FinOps skills: request the complete
-trailing ~30-day result with `\$top=1000`, project only needed fields, and paginate every `nextLink`.
-On `413`, lower `\$top` to `100` then `20`; only then use verified short `usageStart` date slices as
-a fallback. Do **not** use `az rest --method post` or the Cost Management Query API — POST is blocked
-as a write.
+Follow the canonical Consumption UsageDetails transport contract in `finops-managed-scope` for the
+complete trailing ~30-day result, using this skill's needed fields:
 
 ```bash
 az rest --method get \
   --url "https://management.azure.com/subscriptions/<SUB_ID>/providers/Microsoft.Consumption/usageDetails?api-version=2023-05-01&metric=ActualCost&\$top=1000" \
-  --query "{value: value[].{date: properties.date, cost: properties.costInUSD, costInUSD: properties.costInUSD, pretaxCost: properties.pretaxCost, consumedService: properties.consumedService, meterCategory: properties.meterCategory, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName}, nextLink: nextLink}"
+  --query "{value: value[].{id: id, date: properties.date, cost: properties.costInUSD, pretaxCost: properties.pretaxCost, consumedService: properties.consumedService, meterCategory: properties.meterCategory, subscriptionId: properties.subscriptionId, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName || properties.resourceId}, nextLink: nextLink}"
 ```
 
-In modern billing the full ARM resource id is usually in `properties.instanceName`; fall back to
-`properties.resourceId` if present. If `costInUSD` is null, the bundled core uses the same fallback
+In modern billing the full ARM resource id is usually in `properties.instanceName`; the projection
+falls back to `properties.resourceId`. If `costInUSD` is null, the bundled core uses the same fallback
 order as the other skills: `cost` / `costInUSD` / `pretaxCost`. If the pull cannot complete after all
 fallbacks, keep the partial rows but label the report totals **partial — cost pull truncated**.
 

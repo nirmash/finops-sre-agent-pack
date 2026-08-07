@@ -52,9 +52,7 @@ REPORT_TASK_NAME="${REPORT_TASK_NAME:-FinOps: Cost Overview (Live Report, Daily)
 RIGHTSIZE_REPORT_TASK_NAME="${RIGHTSIZE_REPORT_TASK_NAME:-FinOps: Rightsizing Savings (Live Report, Weekly)}"
 AGENT_NAME="${AGENT_NAME:-}"                       # compatibility alias for TASK_AGENT_NAME
 TASK_AGENT_NAME="${TASK_AGENT_NAME:-${AGENT_NAME:-$FINOPS_AGENT_NAME}}"
-DEFAULT_SUB_ID="93cba93f-571e-44e9-ac0a-a2987b58848c"
 SUB_ID_WAS_SET="${SUB_ID+x}"
-SUB_ID="${SUB_ID:-$DEFAULT_SUB_ID}"              # deprecated; never used for prompts or RBAC
 CRON="${CRON:-0 14 * * *}"                         # daily anomaly scan (14:00 UTC)
 RIGHTSIZE_CRON="${RIGHTSIZE_CRON:-0 15 * * 1}"     # weekly rightsizing review (Mon 15:00 UTC)
 REPORT_CRON="${REPORT_CRON:-0 14 * * *}"           # daily live-report refresh (14:00 UTC)
@@ -73,8 +71,17 @@ AI_REPORT_NAME="${AI_REPORT_NAME:-FinOps: AI Spend}"         # display name; kep
 RELIABILITY_REPORT_TASK_NAME="${RELIABILITY_REPORT_TASK_NAME:-FinOps: Cost vs Reliability (Live Report, Weekly)}"
 RELIABILITY_REPORT_CRON="${RELIABILITY_REPORT_CRON:-0 19 * * 1}" # weekly cost-vs-reliability live-report refresh (Mon 19:00 UTC)
 RELIABILITY_REPORT_NAME="${RELIABILITY_REPORT_NAME:-FinOps: Cost vs Reliability}" # display name; kept stable so weekly runs version the same report
-ALERT_EMAIL="${ALERT_EMAIL:-nimashkowski@microsoft.com}"
-GITHUB_REPO="${GITHUB_REPO:-nirmash/azure-sre-agent-sandbox}"   # repo searched for change correlation
+MODEL_TIER="${MODEL_TIER:-ReasoningHeavy}"        # default for all scheduled tasks
+ANOMALY_MODEL_TIER="${ANOMALY_MODEL_TIER:-$MODEL_TIER}"
+RIGHTSIZE_MODEL_TIER="${RIGHTSIZE_MODEL_TIER:-$MODEL_TIER}"
+REPORT_MODEL_TIER="${REPORT_MODEL_TIER:-$MODEL_TIER}"
+RIGHTSIZE_REPORT_MODEL_TIER="${RIGHTSIZE_REPORT_MODEL_TIER:-$MODEL_TIER}"
+BUDGET_REPORT_MODEL_TIER="${BUDGET_REPORT_MODEL_TIER:-$MODEL_TIER}"
+COST_OPT_MODEL_TIER="${COST_OPT_MODEL_TIER:-$MODEL_TIER}"
+AI_REPORT_MODEL_TIER="${AI_REPORT_MODEL_TIER:-$MODEL_TIER}"
+RELIABILITY_REPORT_MODEL_TIER="${RELIABILITY_REPORT_MODEL_TIER:-$MODEL_TIER}"
+ALERT_EMAIL="${ALERT_EMAIL:-}"                    # optional; unset keeps results in the task run only
+GITHUB_REPO="${GITHUB_REPO:-}"                    # optional owner/repo for change correlation
 MI_OBJECT_ID="${MI_OBJECT_ID:-}"                 # agent MI objectId; set to auto-grant Cost Management Reader
 
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
@@ -97,8 +104,37 @@ esac
 
 [ -n "$AGENT_RESOURCE_ID" ] || \
   die "AGENT_RESOURCE_ID is required. ENDPOINT-only installation cannot enforce dynamic managed scope."
-if [ -n "$SUB_ID_WAS_SET" ] || [ "$SUB_ID" != "$DEFAULT_SUB_ID" ]; then
+if [ -n "$SUB_ID_WAS_SET" ]; then
   warn "SUB_ID is deprecated and ignored; managed scopes come only from AGENT_RESOURCE_ID."
+fi
+if [ -n "$ALERT_EMAIL" ] && [[ ! "$ALERT_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}$ ]]; then
+  die "ALERT_EMAIL must be a single email address, or unset it to disable email delivery."
+fi
+if [ -n "$GITHUB_REPO" ] && [[ ! "$GITHUB_REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+  die "GITHUB_REPO must use owner/repo format, or unset it to disable GitHub correlation."
+fi
+for model_tier in \
+  "$ANOMALY_MODEL_TIER" "$RIGHTSIZE_MODEL_TIER" "$REPORT_MODEL_TIER" \
+  "$RIGHTSIZE_REPORT_MODEL_TIER" "$BUDGET_REPORT_MODEL_TIER" \
+  "$COST_OPT_MODEL_TIER" "$AI_REPORT_MODEL_TIER" "$RELIABILITY_REPORT_MODEL_TIER"; do
+  case "$model_tier" in
+    *[!A-Za-z0-9._-]*|'') die "Scheduled-task model tiers must contain only letters, numbers, dot, underscore, or hyphen.";;
+  esac
+done
+
+if [ -n "$GITHUB_REPO" ]; then
+  ANOMALY_CORRELATION_STEP="for EACH anomaly, search only its effective managed scope's subscription/resource-group deployments, activity-log write ops, and GitHub commits + merged PRs (repo ${GITHUB_REPO}) within +/-1 day of the spike date, and attach the most likely cause."
+else
+  warn "GITHUB_REPO not set — scheduled anomaly detection will skip GitHub correlation."
+  ANOMALY_CORRELATION_STEP="for EACH anomaly, search only its effective managed scope's subscription/resource-group deployments and activity-log write ops within +/-1 day of the spike date, and attach the most likely cause. GitHub correlation is disabled because GITHUB_REPO was not set at installation time."
+fi
+if [ -n "$ALERT_EMAIL" ]; then
+  ANOMALY_DELIVERY_STEP="email the report to ${ALERT_EMAIL} with subject \"Cost anomaly detected — <date>\" and High importance."
+  RIGHTSIZE_DELIVERY_STEP="email the report to ${ALERT_EMAIL} with subject \"Weekly rightsizing review — <date>\" and Normal importance."
+else
+  warn "ALERT_EMAIL not set — scheduled findings will remain in task results and no email will be sent."
+  ANOMALY_DELIVERY_STEP="do not send email; ALERT_EMAIL was not set at installation time, so return the report only in the scheduled-task result."
+  RIGHTSIZE_DELIVERY_STEP="do not send email; ALERT_EMAIL was not set at installation time, so return the report only in the scheduled-task result."
 fi
 
 say "Discovering agent endpoint, managed scopes, and identity"
@@ -625,14 +661,21 @@ for i in $(seq 1 30); do
 done
 
 # ---- 5. Upsert the scheduled tasks -----------------------------------------
-# upsert_task NAME DESCRIPTION CRON PROMPT — POST new / PUT existing by name.
+# Load once for all upserts. A fresh list is fetched again during final verification.
+say "Loading existing scheduled tasks"
+api GET /api/v1/scheduledtasks
+case "$HTTP_CODE" in
+  200) SCHEDULED_TASKS_JSON="$RESP_BODY";;
+  *) die "Could not list scheduled tasks (HTTP $HTTP_CODE): $RESP_BODY";;
+esac
+
+# upsert_task NAME DESCRIPTION CRON PROMPT MODEL_TIER — POST new / PUT existing by name.
 upsert_task() {
-  local name="$1" description="$2" cron="$3" prompt="$4"
+  local name="$1" description="$2" cron="$3" prompt="$4" model_tier="$5"
   prompt="${FINOPS_SCOPE_PREAMBLE}"$'\n\n'"${prompt}"
 
-  api GET /api/v1/scheduledtasks; local existing="$RESP_BODY"
   local task_info task_id current_agent current_status
-  task_info="$(printf '%s' "$existing" | TASK_NAME="$name" python3 -c '
+  task_info="$(printf '%s' "$SCHEDULED_TASKS_JSON" | TASK_NAME="$name" python3 -c '
 import json,os,sys
 name=os.environ["TASK_NAME"]
 try: data=json.load(sys.stdin)
@@ -654,7 +697,8 @@ print("\t".join((str(task.get("id","")), str(task.get("agent","")), str(task.get
   fi
 
   local body; body="$(mktemp)"
-  TASK_NAME="$name" TASK_DESC="$description" CRON="$cron" TASK_AGENT_NAME="$TASK_AGENT_NAME" PROMPT="$prompt" \
+  TASK_NAME="$name" TASK_DESC="$description" CRON="$cron" TASK_AGENT_NAME="$TASK_AGENT_NAME" \
+  MODEL_TIER="$model_tier" PROMPT="$prompt" \
     python3 - "$body" <<'PY'
 import json, os, sys
 doc = {
@@ -664,6 +708,7 @@ doc = {
     "agentPrompt": os.environ["PROMPT"],
     "agent": os.environ["TASK_AGENT_NAME"],
     "agentMode": "autonomous",
+    "modelTier": os.environ["MODEL_TIER"],
 }
 open(sys.argv[1], "w").write(json.dumps(doc))
 PY
@@ -700,16 +745,16 @@ Run the \`finops-cost-anomaly-detection\` skill for every dynamically discovered
 1. Load the skill — read its SKILL.md so you use the bundled detector and steps.
 2. Step 1 (pull): independently GET Consumption UsageDetails (ActualCost) for every effective scope for the last 35 days via \`az rest --method get\` with \`&\$top=1000\`. Project to just the needed fields with \`--query "{value: value[].{date: properties.date, cost: properties.costInUSD, meterCategory: properties.meterCategory, resourceGroup: properties.resourceGroup, resourceId: properties.instanceName, tags: tags}, nextLink: nextLink}"\` and paginate every nextLink. If a request 413s, lower \$top (1000→100→20). Only if bounded pages still fail, use short usageStart date slices as a fallback; verify returned dates because the filter is not reliably applied, then de-duplicate combined rows. --query is client-side and keeps retained JSON small but does not itself prevent a server 413. nextLink in the body is HTML-escaped (&amp;) — decode before following. resourceId comes from properties.instanceName, falling back to properties.resourceId (resourceId is null in modern billing). If the pull cannot complete, keep partial rows but label downstream totals "partial — cost pull truncated".
 3. Step 2 (detect): write the skill's embedded detect.py to the sandbox and run detect_anomalies(line_items) with defaults (baseline_days=28, k=3.0, min_delta_usd=5.0, wow_ratio=1.5). Keep assume_last_partial=True so the partial newest billing day is excluded.
-4. Step 3 (correlate): for EACH anomaly, search only its effective managed scope's subscription/resource-group deployments, activity-log write ops, and GitHub commits + merged PRs (repo ${GITHUB_REPO}) within +/-1 day of the spike date, and attach the most likely cause.
+4. Step 3 (correlate only its effective managed scope): ${ANOMALY_CORRELATION_STEP}
 5. Step 4 (report):
    - If NO anomalies are detected, reply with a single line "No cost anomalies detected for <date>." and stop. Do not email.
-   - If one or more anomalies ARE detected, produce a ranked table (dimension, value, kind, current_usd, baseline_mean_usd, dod_delta_usd, %change, candidate cause) and email the report to ${ALERT_EMAIL} with subject "Cost anomaly detected — <date>" and High importance.
+   - If one or more anomalies ARE detected, produce a ranked table (dimension, value, kind, current_usd, baseline_mean_usd, dod_delta_usd, %change, candidate cause) and ${ANOMALY_DELIVERY_STEP}
 
 Read-only only. Do not use any write/POST Azure operations.
 EOF
 upsert_task "$TASK_NAME" \
   "Part of the FinOps pack — installed with the finops-cost-anomaly-detection skill. Proactive daily cost-anomaly scan; reports only when a spike is detected." \
-  "$CRON" "$ANOMALY_PROMPT"
+  "$CRON" "$ANOMALY_PROMPT" "$ANOMALY_MODEL_TIER"
 
 say "Upserting scheduled task '$RIGHTSIZE_TASK_NAME'"
 read -r -d '' RIGHTSIZE_PROMPT <<EOF || true
@@ -724,13 +769,13 @@ Run the \`finops-rightsizing-advisor\` skill for every dynamically discovered ma
 7. Step 5 (rank): write the skill's rightsize.py to the sandbox and run recommend_rightsizing(resources=..., utilization=..., activity=..., costs=..., advisor=...).
 8. Step 6 (report):
    - If NOTHING clears the savings threshold, reply with a single line "No rightsizing opportunities above threshold this week." and stop. Do not email.
-   - Otherwise produce a ranked table (resource, type, kind, current SKU, recommended action, current monthly \$, est monthly savings \$, validated, evidence) with the TOTAL estimated monthly savings at the top, mark validated=false / unvalidated rows as "verify first", and email the report to ${ALERT_EMAIL} with subject "Weekly rightsizing review — <date>" and Normal importance.
+   - Otherwise produce a ranked table (resource, type, kind, current SKU, recommended action, current monthly \$, est monthly savings \$, validated, evidence) with the TOTAL estimated monthly savings at the top, mark validated=false / unvalidated rows as "verify first", and ${RIGHTSIZE_DELIVERY_STEP}
 
 Recommend only. Read-only. Do not use any write/POST Azure operations.
 EOF
 upsert_task "$RIGHTSIZE_TASK_NAME" \
   "Part of the FinOps pack — installed with the finops-rightsizing-advisor skill. Weekly read-only rightsizing / idle-resource review; reports ranked savings opportunities." \
-  "$RIGHTSIZE_CRON" "$RIGHTSIZE_PROMPT"
+  "$RIGHTSIZE_CRON" "$RIGHTSIZE_PROMPT" "$RIGHTSIZE_MODEL_TIER"
 
 say "Upserting scheduled task '$REPORT_TASK_NAME'"
 read -r -d '' REPORT_PROMPT <<EOF || true
@@ -753,7 +798,7 @@ Read-only Azure only. Do not use any write/POST Azure operations. When done, con
 EOF
 upsert_task "$REPORT_TASK_NAME" \
   "Part of the FinOps pack — a daily-refreshed Live Report (Operations Hub) snapshot of Azure cost: total, daily trend, top services, and top resource groups." \
-  "$REPORT_CRON" "$REPORT_PROMPT"
+  "$REPORT_CRON" "$REPORT_PROMPT" "$REPORT_MODEL_TIER"
 
 say "Upserting scheduled task '$RIGHTSIZE_REPORT_TASK_NAME'"
 read -r -d '' RIGHTSIZE_REPORT_PROMPT <<EOF || true
@@ -778,7 +823,7 @@ Recommend only. Read-only Azure. Do not use any write/POST Azure operations. Whe
 EOF
 upsert_task "$RIGHTSIZE_REPORT_TASK_NAME" \
   "Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub) of rightsizing / idle-resource savings: total potential savings, a top-opportunities chart, and a ranked recommendations table." \
-  "$RIGHTSIZE_REPORT_CRON" "$RIGHTSIZE_REPORT_PROMPT"
+  "$RIGHTSIZE_REPORT_CRON" "$RIGHTSIZE_REPORT_PROMPT" "$RIGHTSIZE_REPORT_MODEL_TIER"
 
 say "Upserting scheduled task '$BUDGET_REPORT_TASK_NAME'"
 read -r -d '' BUDGET_REPORT_PROMPT <<EOF || true
@@ -801,7 +846,7 @@ Read-only Azure only. Do not use any write/POST Azure operations. When done, con
 EOF
 upsert_task "$BUDGET_REPORT_TASK_NAME" \
   "Part of the FinOps pack — a daily-refreshed Live Report (Operations Hub) snapshot of Azure budget governance: each budget's spend vs amount, forecast, status, and any budgets that need a decision." \
-  "$BUDGET_REPORT_CRON" "$BUDGET_REPORT_PROMPT"
+  "$BUDGET_REPORT_CRON" "$BUDGET_REPORT_PROMPT" "$BUDGET_REPORT_MODEL_TIER"
 
 say "Upserting scheduled task '$COST_OPT_TASK_NAME'"
 read -r -d '' COST_OPT_PROMPT <<EOF || true
@@ -824,7 +869,7 @@ Read-only Azure only. Do not use any write/POST Azure operations. When done, con
 EOF
 upsert_task "$COST_OPT_TASK_NAME" \
   "Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub) executive rollup for Azure: potential savings, cost anomalies, budget status, and governance (policy) findings, with one prioritized action list." \
-  "$COST_OPT_CRON" "$COST_OPT_PROMPT"
+  "$COST_OPT_CRON" "$COST_OPT_PROMPT" "$COST_OPT_MODEL_TIER"
 
 say "Upserting scheduled task '$AI_REPORT_TASK_NAME'"
 read -r -d '' AI_REPORT_PROMPT <<EOF || true
@@ -847,7 +892,7 @@ Read-only Azure only. Do not use any write/POST Azure operations. When done, con
 EOF
 upsert_task "$AI_REPORT_TASK_NAME" \
   "Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub) of Azure AI spend: total AI cost, per-model and per-resource breakdowns, a token-vs-compute split, top cost drivers, and read-only optimization hints. Covers Azure OpenAI + AI Foundry + ML." \
-  "$AI_REPORT_CRON" "$AI_REPORT_PROMPT"
+  "$AI_REPORT_CRON" "$AI_REPORT_PROMPT" "$AI_REPORT_MODEL_TIER"
 
 say "Upserting scheduled task '$RELIABILITY_REPORT_TASK_NAME'"
 read -r -d '' RELIABILITY_REPORT_PROMPT <<EOF || true
@@ -870,7 +915,7 @@ Read-only Azure only. Do not use any write/POST Azure operations. When done, con
 EOF
 upsert_task "$RELIABILITY_REPORT_TASK_NAME" \
   "Part of the FinOps pack — a weekly-refreshed Live Report (Operations Hub) comparing Azure spend with reliability pain from alerts, Resource Health, and Advisor HighAvailability; ranks resources/services, investment candidates, and verify-before-cutting candidates." \
-  "$RELIABILITY_REPORT_CRON" "$RELIABILITY_REPORT_PROMPT"
+  "$RELIABILITY_REPORT_CRON" "$RELIABILITY_REPORT_PROMPT" "$RELIABILITY_REPORT_MODEL_TIER"
 
 # ---- 6. Verify --------------------------------------------------------------
 say "Verifying"
